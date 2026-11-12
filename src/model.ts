@@ -107,14 +107,23 @@ export function computeStats(statuses: Statuses, people: ReadonlySet<string>): S
 
 const KEY = 'been-map:v1'
 
+/** Keeps only known countries and statuses from untrusted input (storage, the server). */
+export function cleanStatuses(raw: unknown): Statuses {
+  const out: Statuses = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const [a2, s] of Object.entries(raw)) {
+    if (BY_A2.has(a2) && typeof s === 'string' && s in STATUS_BY_ID) out[a2] = s as Status
+  }
+  return out
+}
+
+export function cleanPeople(raw: unknown): Set<string> {
+  return new Set((Array.isArray(raw) ? raw : []).filter((a2) => typeof a2 === 'string' && BY_A2.has(a2)))
+}
+
 export function loadStatuses(): Statuses {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}')
-    const out: Statuses = {}
-    for (const [a2, s] of Object.entries(raw)) {
-      if (BY_A2.has(a2) && typeof s === 'string' && s in STATUS_BY_ID) out[a2] = s as Status
-    }
-    return out
+    return cleanStatuses(JSON.parse(localStorage.getItem(KEY) ?? '{}'))
   } catch {
     return {}
   }
@@ -132,8 +141,7 @@ const PEOPLE_KEY = 'been-map:people:v1'
 
 export function loadPeople(): Set<string> {
   try {
-    const raw = JSON.parse(localStorage.getItem(PEOPLE_KEY) ?? '[]')
-    return new Set((Array.isArray(raw) ? raw : []).filter((a2) => BY_A2.has(a2)))
+    return cleanPeople(JSON.parse(localStorage.getItem(PEOPLE_KEY) ?? '[]'))
   } catch {
     return new Set()
   }
@@ -171,6 +179,26 @@ export function loadSettings(): Settings {
 export function saveSettings(settings: Settings) {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+  } catch {
+    // see saveStatuses
+  }
+}
+
+// Which account the locally stored map belongs to. Unset while the map is anonymous.
+const OWNER_KEY = 'been-map:owner:v1'
+
+export function loadOwner(): string | null {
+  try {
+    return localStorage.getItem(OWNER_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function saveOwner(userId: string | null) {
+  try {
+    if (userId) localStorage.setItem(OWNER_KEY, userId)
+    else localStorage.removeItem(OWNER_KEY)
   } catch {
     // see saveStatuses
   }

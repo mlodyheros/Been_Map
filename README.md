@@ -9,3 +9,12 @@ npm run dev
 
 - `npm run build` — sprawdzenie typów i build produkcyjny
 - `npm run countries` — odświeża `src/data/countries.json` z pakietu `world-countries`
+
+## Konta i znajomi
+
+Logowanie, synchronizacja mapy i znajomi działają na Supabase. Jednorazowa konfiguracja projektu:
+
+1. SQL Editor → wklej i uruchom `supabase/schema.sql`.
+2. Authentication → URL Configuration → ustaw Site URL na adres aplikacji i dodaj `http://localhost:5173` do Redirect URLs.
+
+Adres projektu i klucz publiczny są w `src/cloud.ts`.
