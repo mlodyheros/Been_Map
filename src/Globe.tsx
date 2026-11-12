@@ -43,7 +43,7 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
   // Everything the render loop reads lives in one mutable object so that
   // dragging never goes through React.
   const state = useRef({
-    view: { ...START },
+    view: { ...START, lat: mode === 'flat' ? 12 : START.lat },
     world: null as World | null,
     statuses,
     people,
@@ -91,6 +91,19 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       changed.every((a2) => (BY_A2.get(a2)?.area ?? 0) >= DOT_BELOW_KM2)
     if (patchable) for (const a2 of changed) state.patch.add(a2)
     else state.version++
+
+    if (before.mode !== mode) {
+      // a flat map reads best centred near the equator, the globe a little north of it
+      if (state.view.zoom < 1.3) state.view = { lng: state.view.lng, lat: mode === 'flat' ? 12 : START.lat, zoom: 1 }
+      state.velocity = { lng: 0, lat: 0 }
+      state.fly = null
+      const canvas = canvasRef.current
+      if (canvas && !reducedMotion()) {
+        canvas.classList.remove('swap')
+        void canvas.offsetWidth // restart the animation
+        canvas.classList.add('swap')
+      }
+    }
     state.request()
   }, [statuses, people, mode, state])
 
@@ -223,7 +236,8 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       state.version++
       if (!reducedMotion()) {
         // opening move: the globe turns into place
-        state.fly = { from: { lng: START.lng - 70, lat: 8, zoom: 0.9 }, to: { ...START }, start: performance.now(), ms: 1400 }
+        const to = { ...state.view }
+        state.fly = { from: { lng: to.lng - 70, lat: to.lat - 20, zoom: 0.9 }, to, start: performance.now(), ms: 1400 }
       }
       state.request()
     })

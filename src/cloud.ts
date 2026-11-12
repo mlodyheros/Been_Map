@@ -157,3 +157,85 @@ export async function removeFriendship(id: number) {
   const { error } = await supabase.from('friendships').delete().eq('id', id)
   if (error) fail(error)
 }
+
+export interface SharedMapInfo {
+  id: string
+  name: string
+  /** True when the signed-in user created the map and may delete it. */
+  mine: boolean
+  members: { userId: string; username: string }[]
+}
+
+export async function listSharedMaps(userId: string): Promise<SharedMapInfo[]> {
+  const { data, error } = await supabase
+    .from('shared_maps')
+    .select('id, name, created_by, members:shared_map_members(user_id, profile:profiles(username))')
+    .order('name')
+  if (error) fail(error)
+  type Row = {
+    id: string
+    name: string
+    created_by: string
+    members: { user_id: string; profile: { username: string } | null }[]
+  }
+  return (data as unknown as Row[]).map((row) => ({
+    id: row.id,
+    name: row.name,
+    mine: row.created_by === userId,
+    members: row.members
+      .map((m) => ({ userId: m.user_id, username: m.profile?.username ?? '?' }))
+      .sort((a, b) => a.username.localeCompare(b.username)),
+  }))
+}
+
+export async function createSharedMap(name: string) {
+  const { error } = await supabase.rpc('create_shared_map', { map_name: name })
+  if (error) fail(error)
+}
+
+export async function deleteSharedMap(id: string) {
+  const { error } = await supabase.from('shared_maps').delete().eq('id', id)
+  if (error) fail(error)
+}
+
+export async function addSharedMember(mapId: string, userId: string) {
+  const { error } = await supabase.from('shared_map_members').insert({ map_id: mapId, user_id: userId })
+  if (error) fail(error)
+}
+
+/** Leaves a shared map, or (as its creator) removes someone from it. */
+export async function removeSharedMember(mapId: string, userId: string) {
+  const { error } = await supabase.from('shared_map_members').delete().eq('map_id', mapId).eq('user_id', userId)
+  if (error) fail(error)
+}
+
+export async function fetchSharedMap(id: string): Promise<CloudMap | null> {
+  const { data, error } = await supabase.from('shared_maps').select('statuses, people').eq('id', id).maybeSingle()
+  if (error) fail(error)
+  return data ? { statuses: cleanStatuses(data.statuses), people: cleanPeople(data.people) } : null
+}
+
+export async function markShared(mapId: string, country: string, status: string | null) {
+  const { error } = await supabase.rpc('mark_shared_map', { map: mapId, country, new_status: status })
+  if (error) fail(error)
+}
+
+export async function flagShared(mapId: string, country: string, known: boolean) {
+  const { error } = await supabase.rpc('flag_shared_map', { map: mapId, country, known })
+  if (error) fail(error)
+}
+
+/** Calls `onChange` whenever someone marks the shared map. Returns a function that stops listening. */
+export function watchSharedMap(id: string, onChange: (map: CloudMap) => void) {
+  const channel = supabase
+    .channel(`shared-map-${id}`)
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'shared_maps', filter: `id=eq.${id}` },
+      (payload) => onChange({ statuses: cleanStatuses(payload.new.statuses), people: cleanPeople(payload.new.people) }),
+    )
+    .subscribe()
+  return () => {
+    supabase.removeChannel(channel)
+  }
+}

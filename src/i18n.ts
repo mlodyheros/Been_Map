@@ -69,6 +69,19 @@ interface Strings {
     common(n: number): string
     back: string
     syncFailed: string
+    shared: string
+    sharedHelp: string
+    sharedName: string
+    create: string
+    openMap: string
+    addFriend: string
+    leave: string
+    delete: string
+    noShared: string
+    sharedTitle(name: string): string
+    people(n: number): string
+    marked(country: string, what: string): string
+    cleared(country: string): string
     errors: Record<CloudErrorCode, string>
   }
 }
@@ -162,6 +175,19 @@ const pl: Strings = {
     common: (n) => `wspólne kraje: ${n}`,
     back: 'Wróć do mojej mapy',
     syncFailed: 'Nie udało się zapisać mapy na koncie. Zmiany są na razie tylko na tym urządzeniu.',
+    shared: 'Wspólne mapy',
+    sharedHelp: 'Jedna mapa, którą zaznaczacie razem, np. z partnerem albo ekipą z wyjazdów.',
+    sharedName: 'Nazwa nowej mapy',
+    create: 'Utwórz',
+    openMap: 'Otwórz',
+    addFriend: 'Dodaj znajomego…',
+    leave: 'Opuść',
+    delete: 'Usuń',
+    noShared: 'Nie masz jeszcze wspólnych map. Utwórz pierwszą i dodaj do niej znajomych.',
+    sharedTitle: (name) => `Wspólna mapa: ${name}`,
+    people: (n) => `osoby: ${n}`,
+    marked: (country, what) => `${country} · ${what}`,
+    cleared: (country) => `${country} · usunięto oznaczenie`,
     errors: {
       credentials: 'Nieprawidłowy e-mail lub hasło.',
       emailTaken: 'Konto z tym adresem e-mail już istnieje. Zaloguj się.',
@@ -259,6 +285,19 @@ const en: Strings = {
     common: (n) => `countries in common: ${n}`,
     back: 'Back to my map',
     syncFailed: "Couldn't save your map to your account. Changes are on this device only for now.",
+    shared: 'Shared maps',
+    sharedHelp: 'One map you mark together, for example with a partner or your travel crew.',
+    sharedName: 'Name of the new map',
+    create: 'Create',
+    openMap: 'Open',
+    addFriend: 'Add a friend…',
+    leave: 'Leave',
+    delete: 'Delete',
+    noShared: 'No shared maps yet. Create one and add friends to it.',
+    sharedTitle: (name) => `Shared map: ${name}`,
+    people: (n) => `people: ${n}`,
+    marked: (country, what) => `${country} · ${what}`,
+    cleared: (country) => `${country} · marking cleared`,
     errors: {
       credentials: 'Wrong email or password.',
       emailTaken: 'An account with this email already exists. Log in instead.',
