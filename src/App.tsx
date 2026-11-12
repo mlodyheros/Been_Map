@@ -51,7 +51,7 @@ type Viewing = CloudMap &
   ({ kind: 'friend'; username: string } | { kind: 'shared'; id: string; name: string; members: number })
 
 type Snap = 'peek' | 'half' | 'full'
-const PHONE = '(max-width: 860px)'
+const PHONE = '(max-width: 900px)'
 
 /**
  * On phones the panel is a bottom sheet with three resting positions. Returns
@@ -135,6 +135,19 @@ function useSheet() {
 
   return { sheet, head, safeArea, phone, snap, setSnap, offset, peek: size.peek, grip }
 }
+
+const DownloadIcon = () => (
+  <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M10 3v9m0 0 3.5-3.5M10 12 6.5 8.5M4 15.5h12" />
+  </svg>
+)
+
+const UserIcon = () => (
+  <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+    <circle cx="10" cy="7" r="3.2" />
+    <path d="M3.8 16.5c.9-2.7 3.3-4.2 6.2-4.2s5.3 1.5 6.2 4.2" />
+  </svg>
+)
 
 const ink = (color: string) => ({ '--status': color }) as React.CSSProperties
 
@@ -223,6 +236,8 @@ export default function App() {
         setPeople(next.people)
         saveOwner(accountId)
         cloudReady.current = true
+        // the account doesn't hold this exact map yet: store it now rather than on the next edit
+        if (next !== remote) await saveMap(accountId, next)
         setSyncFailed(false)
       } catch {
         if (!cancelled) setSyncFailed(true)
@@ -413,6 +428,7 @@ export default function App() {
   return (
     <div className="app" style={sheet.phone ? ({ '--peek': `${sheet.peek}px` } as React.CSSProperties) : undefined}>
       <main className="stage">
+        <div className="topbar">
         <header className="masthead">
           <p className="wordmark">been map</p>
           <p className="tally">
@@ -426,48 +442,6 @@ export default function App() {
           </p>
           {empty && <p className="hint">{t.hint}</p>}
         </header>
-
-        {toast && (
-          <p className="toast" key={toast.id} role="status">
-            {toast.color && <i className="swatch" style={{ background: toast.color }} />}
-            {toast.text}
-          </p>
-        )}
-
-        <Globe ref={globe} statuses={shown.statuses} people={shown.people} mode={mode} lang={lang} onPick={toggle} />
-
-        {viewing && (
-          <div className="viewing" data-above-brush={!readOnly || undefined}>
-            <span>
-              {viewing.kind === 'friend' ? (
-                <>
-                  <strong>{t.account.viewing(viewing.username)}</strong> · {t.account.common(common)}
-                </>
-              ) : (
-                <>
-                  <strong>{t.account.sharedTitle(viewing.name)}</strong> · {t.account.people(viewing.members)}
-                </>
-              )}
-            </span>
-            <button onClick={() => setViewing(null)}>{t.account.back}</button>
-          </div>
-        )}
-        <div className="brush" role="radiogroup" aria-label={t.brushLabel} hidden={readOnly}>
-          {BRUSHES.map((b) => (
-            <button
-              key={b.id}
-              role="radio"
-              aria-checked={brush === b.id}
-              className="brush-option"
-              style={ink(b.color)}
-              onClick={() => setBrush(b.id)}
-            >
-              <i className={`swatch swatch-${b.id}`} />
-              {t.brush[b.id]}
-            </button>
-          ))}
-        </div>
-
         <div className="tools">
           <div className="tools-row">
             <div className="switch" role="radiogroup" aria-label={t.viewLabel}>
@@ -506,14 +480,61 @@ export default function App() {
             <button
               className="tool tool-wide"
               onClick={() => globe.current && downloadPoster(globe.current.snapshot(1600), stats, lang)}
+              aria-label={t.download}
             >
-              {t.download}
+              <DownloadIcon />
+              <span>{t.download}</span>
             </button>
             <button className="tool tool-wide tool-account" onClick={() => setAccountOpen(true)}>
-              {account ? `@${account.username}` : t.account.open}
+              {account ? <b className="avatar">{account.username.slice(0, 1).toUpperCase()}</b> : <UserIcon />}
+              <span>{account ? `@${account.username}` : t.account.open}</span>
             </button>
           </div>
         </div>
+        </div>
+
+        {toast && (
+          <p className="toast" key={toast.id} role="status">
+            {toast.color && <i className="swatch" style={{ background: toast.color }} />}
+            {toast.text}
+          </p>
+        )}
+
+        <Globe ref={globe} statuses={shown.statuses} people={shown.people} mode={mode} lang={lang} onPick={toggle} />
+
+        {viewing && (
+          <div className="viewing" data-above-brush={!readOnly || undefined}>
+            <span>
+              {viewing.kind === 'friend' ? (
+                <>
+                  <strong>{t.account.viewing(viewing.username)}</strong> · {t.account.common(common)}
+                </>
+              ) : (
+                <>
+                  <strong>{t.account.sharedTitle(viewing.name)}</strong> · {t.account.people(viewing.members)}
+                </>
+              )}
+            </span>
+            <button onClick={() => setViewing(null)}>{t.account.back}</button>
+          </div>
+        )}
+        <div className="brush" role="radiogroup" aria-label={t.brushLabel} hidden={readOnly}>
+          <span className="brush-label">{t.brushLabel}</span>
+          {BRUSHES.map((b) => (
+            <button
+              key={b.id}
+              role="radio"
+              aria-checked={brush === b.id}
+              className="brush-option"
+              style={ink(b.color)}
+              onClick={() => setBrush(b.id)}
+            >
+              <i className={`swatch swatch-${b.id}`} />
+              {t.brush[b.id]}
+            </button>
+          ))}
+        </div>
+
       </main>
 
       <aside
