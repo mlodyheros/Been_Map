@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import Account from './Account'
+import { fetchMap, saveMap, supabase, type Account as AccountInfo, type CloudMap, type Friend } from './cloud'
 import Globe, { type GlobeHandle } from './Globe'
 import { LANGS, STRINGS, countryName, type Brush } from './i18n'
 import {
@@ -12,9 +14,11 @@ import {
   fold,
   isBeen,
   landShareLabel,
+  loadOwner,
   loadPeople,
   loadSettings,
   loadStatuses,
+  saveOwner,
   savePeople,
   saveSettings,
   saveStatuses,
@@ -125,6 +129,11 @@ export default function App() {
   const [brush, setBrush] = useState<Brush>('visited')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
+  const [account, setAccount] = useState<AccountInfo | null>(null)
+  const [accountOpen, setAccountOpen] = useState(false)
+  const [syncFailed, setSyncFailed] = useState(false)
+  /** A friend's map shown read-only in place of your own. */
+  const [viewing, setViewing] = useState<(CloudMap & { username: string }) | null>(null)
   const globe = useRef<GlobeHandle>(null)
   const sheet = useSheet()
 
@@ -132,8 +141,10 @@ export default function App() {
   const t = STRINGS[lang]
 
   // The map's click handler needs the latest values without re-subscribing.
-  const live = useRef({ statuses, people, brush })
-  live.current = { statuses, people, brush }
+  const live = useRef({ statuses, people, brush, locked: false })
+  live.current = { statuses, people, brush, locked: viewing !== null }
+  /** True once the signed-in account's map has been loaded, so local edits may be uploaded. */
+  const cloudReady = useRef(false)
 
   useEffect(() => saveStatuses(statuses), [statuses])
   useEffect(() => savePeople(people), [people])
@@ -143,12 +154,93 @@ export default function App() {
     document.title = STRINGS[settings.lang].title
   }, [settings])
 
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      const user = session?.user
+      setAccount((current) =>
+        user
+          ? current?.id === user.id
+            ? current
+            : { id: user.id, username: String(user.user_metadata.username ?? '') }
+          : null,
+      )
+      if (event === 'SIGNED_OUT') {
+        // the map belongs to the account; don't leave it behind for the next person
+        cloudReady.current = false
+        saveOwner(null)
+        setStatuses({})
+        setPeople(new Set())
+        setViewing(null)
+        setSyncFailed(false)
+      }
+    })
+    return () => data.subscription.unsubscribe()
+  }, [])
+
+  const accountId = account?.id
+  useEffect(() => {
+    if (!accountId) return
+    let cancelled = false
+    cloudReady.current = false
+    ;(async () => {
+      try {
+        const remote = await fetchMap(accountId)
+        if (cancelled) return
+        const owner = loadOwner()
+        const local: CloudMap = { statuses: live.current.statuses, people: live.current.people }
+        const empty: CloudMap = { statuses: {}, people: new Set() }
+        let next: CloudMap
+        if (owner === accountId) next = remote ?? local // local copy is just this account's cache
+        else if (owner) next = remote ?? empty // cache left over from another account
+        else if (!remote) next = local // first sign-in: the anonymous map becomes the account's map
+        else {
+          // anonymous marks made before signing in are added to the account's map
+          next = {
+            statuses: { ...local.statuses, ...remote.statuses },
+            people: new Set([...local.people, ...remote.people]),
+          }
+        }
+        live.current.statuses = next.statuses
+        live.current.people = next.people
+        setStatuses(next.statuses)
+        setPeople(next.people)
+        saveOwner(accountId)
+        cloudReady.current = true
+        setSyncFailed(false)
+      } catch {
+        if (!cancelled) setSyncFailed(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [accountId])
+
+  useEffect(() => {
+    if (!accountId || !cloudReady.current) return
+    const timer = setTimeout(() => {
+      saveMap(accountId, { statuses, people }).then(
+        () => setSyncFailed(false),
+        () => setSyncFailed(true),
+      )
+    }, 700)
+    return () => clearTimeout(timer)
+  }, [accountId, statuses, people])
+
+  const viewFriend = useCallback(async (friend: Friend) => {
+    const map = await fetchMap(friend.userId)
+    setViewing({ username: friend.username, statuses: map?.statuses ?? {}, people: map?.people ?? new Set() })
+    setAccountOpen(false)
+  }, [])
+  const closeAccount = useCallback(() => setAccountOpen(false), [])
+
   /**
    * Applies the active marking to a country; a second tap with the same marking clears it.
    * Returns the marking's colour, or null when it was cleared.
    */
   const toggle = useCallback((a2: string) => {
-    const { statuses: current, people: known, brush: active } = live.current
+    const { statuses: current, people: known, brush: active, locked } = live.current
+    if (locked) return null
     if (active === 'people') {
       const next = new Set(known)
       const added = !next.delete(a2)
@@ -173,7 +265,14 @@ export default function App() {
     if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur()
   }
 
-  const stats = useMemo(() => computeStats(statuses, people), [statuses, people])
+  // everything below draws either your own map or the friend's map being viewed
+  const own = { statuses, people }
+  const shown = viewing ?? own
+  const stats = useMemo(() => computeStats(shown.statuses, shown.people), [shown.statuses, shown.people])
+  const common = useMemo(
+    () => (viewing ? Object.keys(viewing.statuses).filter((a2) => isBeen(viewing.statuses[a2]) && isBeen(statuses[a2])).length : 0),
+    [viewing, statuses],
+  )
 
   const sorted = useMemo(
     () => [...COUNTRIES].sort((a, b) => countryName(a, lang).localeCompare(countryName(b, lang), lang)),
@@ -183,15 +282,15 @@ export default function App() {
   const groups = useMemo(() => {
     const q = fold(query.trim())
     const rows = sorted.filter((c) => {
-      const s = statuses[c.a2]
-      if (filter === 'marked' && !s && !people.has(c.a2)) return false
+      const s = shown.statuses[c.a2]
+      if (filter === 'marked' && !s && !shown.people.has(c.a2)) return false
       if (filter === 'wish' && s !== 'wish') return false
       return !q || fold(c.name).includes(q) || fold(c.en).includes(q)
     })
     return CONTINENT_IDS.map((id) => ({ id, rows: rows.filter((c) => c.cont === id) })).filter((g) => g.rows.length)
-  }, [query, filter, statuses, people, sorted])
+  }, [query, filter, shown.statuses, shown.people, sorted])
 
-  const empty = Object.keys(statuses).length === 0 && people.size === 0
+  const empty = !viewing && Object.keys(statuses).length === 0 && people.size === 0
   const extras = [
     [t.extras.territories, stats.territories],
     [t.extras.transit, stats.transit],
@@ -236,9 +335,17 @@ export default function App() {
           {empty && <p className="hint">{t.hint}</p>}
         </header>
 
-        <Globe ref={globe} statuses={statuses} people={people} mode={mode} lang={lang} onPick={toggle} />
+        <Globe ref={globe} statuses={shown.statuses} people={shown.people} mode={mode} lang={lang} onPick={toggle} />
 
-        <div className="brush" role="radiogroup" aria-label={t.brushLabel}>
+        {viewing && (
+          <div className="viewing">
+            <span>
+              <strong>{t.account.viewing(viewing.username)}</strong> · {t.account.common(common)}
+            </span>
+            <button onClick={() => setViewing(null)}>{t.account.back}</button>
+          </div>
+        )}
+        <div className="brush" role="radiogroup" aria-label={t.brushLabel} hidden={viewing !== null}>
           {BRUSHES.map((b) => (
             <button
               key={b.id}
@@ -295,6 +402,9 @@ export default function App() {
             >
               {t.download}
             </button>
+            <button className="tool tool-wide tool-account" onClick={() => setAccountOpen(true)}>
+              {account ? `@${account.username}` : t.account.open}
+            </button>
           </div>
         </div>
       </main>
@@ -319,6 +429,11 @@ export default function App() {
 
         <div className="sheet-head" ref={sheet.head}>
           <button className="grip" aria-label={t.sheet} {...sheet.grip} />
+        {syncFailed && (
+          <p className="sync-failed" role="status">
+            {t.account.syncFailed}
+          </p>
+        )}
         <div className="finder">
           <input
             type="search"
@@ -353,13 +468,13 @@ export default function App() {
               <h2>
                 {t.continents[g.id]}
                 <span>
-                  {g.rows.filter((c) => isBeen(statuses[c.a2])).length}/{g.rows.length}
+                  {g.rows.filter((c) => isBeen(shown.statuses[c.a2])).length}/{g.rows.length}
                 </span>
               </h2>
               <ul>
                 {g.rows.map((c) => {
-                  const s = statuses[c.a2]
-                  const knows = people.has(c.a2)
+                  const s = shown.statuses[c.a2]
+                  const knows = shown.people.has(c.a2)
                   const name = countryName(c, lang)
                   // the circle shows the layer the brush edits: people ring or status fill
                   const on = brush === 'people' ? knows : Boolean(s)
@@ -377,6 +492,7 @@ export default function App() {
                         data-layer={brush === 'people' ? 'people' : s}
                         style={ink(brush === 'people' || !s ? BRUSH_COLOR[brush] : STATUS_BY_ID[s].color)}
                         onClick={() => toggle(c.a2)}
+                        disabled={viewing !== null}
                         aria-label={applied ? t.unmark(name) : t.mark(t.brush[brush], name)}
                       >
                         {s && (
@@ -395,6 +511,8 @@ export default function App() {
           ))}
         </div>
       </aside>
+
+      {accountOpen && <Account lang={lang} account={account} onClose={closeAccount} onViewFriend={viewFriend} />}
     </div>
   )
 }

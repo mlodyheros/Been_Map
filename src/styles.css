@@ -486,6 +486,243 @@ button {
   color: var(--ink-soft);
 }
 
+/* ---------- viewing a friend's map ---------- */
+
+.brush[hidden] {
+  display: none;
+}
+
+.viewing {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100% - 24px);
+  padding: 6px 6px 6px 18px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 14px;
+  box-shadow: 0 10px 30px rgba(21, 26, 51, 0.2);
+}
+
+.viewing span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewing button {
+  flex: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.row-mark:disabled {
+  cursor: default;
+}
+
+.row-mark:disabled > i {
+  opacity: 0.35;
+}
+
+.row-mark:disabled[data-on] > i {
+  opacity: 1;
+}
+
+.sync-failed {
+  margin: 0 24px 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fdecec;
+  color: #8f1d1d;
+  font-size: 13px;
+}
+
+/* ---------- account dialog ---------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(21, 26, 51, 0.38);
+}
+
+.dialog {
+  position: relative;
+  width: min(420px, 100%);
+  max-height: min(680px, 100%);
+  overflow-y: auto;
+  padding: 28px 28px 24px;
+  border-radius: 22px;
+  background: var(--paper);
+  box-shadow: 0 30px 80px rgba(21, 26, 51, 0.3);
+}
+
+.dialog h2 {
+  margin: 0 0 8px;
+  font: 700 20px/1.2 var(--display);
+}
+
+.dialog h3 {
+  margin: 22px 0 10px;
+  font: 500 11px/1 var(--display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.dialog h4 {
+  margin: 18px 0 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.dialog-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--fog);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.dialog-note {
+  margin: 0 0 16px;
+  color: var(--ink-soft);
+}
+
+.dialog-error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fdecec;
+  color: #8f1d1d;
+  font-size: 14px;
+}
+
+.dialog-switch {
+  display: inline-flex;
+  margin-bottom: 16px;
+  background: var(--fog);
+  box-shadow: none;
+}
+
+.dialog form {
+  display: grid;
+  gap: 14px;
+}
+
+.dialog label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.dialog input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--fog);
+  font-size: 16px;
+  font-weight: 400;
+  outline-offset: 0;
+}
+
+.dialog small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+.primary {
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 12px;
+  background: var(--visited);
+  color: #fff;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.primary:disabled,
+.chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.dialog-me {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+}
+
+.link {
+  color: var(--visited);
+  font-weight: 500;
+}
+
+.dialog form.invite {
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.people {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.people li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.people li span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.chip {
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--fog);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.chip-strong {
+  background: var(--ink);
+  color: #fff;
+}
+
 .grip,
 .safe-area,
 .on-phone {
@@ -565,6 +802,27 @@ button {
   .brush {
     bottom: 10px;
     max-width: calc(100% - 16px);
+  }
+
+  .viewing {
+    bottom: 10px;
+    font-size: 13px;
+  }
+
+  .sync-failed {
+    margin: 0 16px 10px;
+  }
+
+  .overlay {
+    align-items: end;
+    padding: 0;
+  }
+
+  .dialog {
+    width: 100%;
+    max-height: calc(100% - 40px - env(safe-area-inset-top));
+    border-radius: 22px 22px 0 0;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
   }
 
   .brush-option {
