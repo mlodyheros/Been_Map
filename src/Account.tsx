@@ -2,6 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   CloudError,
   acceptRequest,
+  addSharedMember,
+  createSharedMap,
+  deleteSharedMap,
+  listSharedMaps,
+  removeSharedMember,
   listFriends,
   removeFriendship,
   sendRequest,
@@ -10,6 +15,7 @@ import {
   signUp,
   type Account as AccountInfo,
   type Friend,
+  type SharedMapInfo,
 } from './cloud'
 import { STRINGS, type Lang } from './i18n'
 
@@ -18,9 +24,10 @@ interface Props {
   account: AccountInfo | null
   onClose(): void
   onViewFriend(friend: Friend): Promise<void>
+  onOpenShared(map: SharedMapInfo): Promise<void>
 }
 
-export default function Account({ lang, account, onClose, onViewFriend }: Props) {
+export default function Account({ lang, account, onClose, onViewFriend, onOpenShared }: Props) {
   const t = STRINGS[lang].account
   const explain = (e: unknown) => t.errors[e instanceof CloudError ? e.code : 'unknown']
 
@@ -37,7 +44,13 @@ export default function Account({ lang, account, onClose, onViewFriend }: Props)
           ×
         </button>
         {account ? (
-          <Friends lang={lang} account={account} explain={explain} onViewFriend={onViewFriend} />
+          <Friends
+            lang={lang}
+            account={account}
+            explain={explain}
+            onViewFriend={onViewFriend}
+            onOpenShared={onOpenShared}
+          />
         ) : (
           <SignIn lang={lang} explain={explain} />
         )}
@@ -133,14 +146,18 @@ function Friends({
   account,
   explain,
   onViewFriend,
+  onOpenShared,
 }: {
   lang: Lang
   account: AccountInfo
   explain(e: unknown): string
   onViewFriend(friend: Friend): Promise<void>
+  onOpenShared(map: SharedMapInfo): Promise<void>
 }) {
   const t = STRINGS[lang].account
   const [friends, setFriends] = useState<Friend[] | null>(null)
+  const [maps, setMaps] = useState<SharedMapInfo[] | null>(null)
+  const [mapName, setMapName] = useState('')
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -148,9 +165,12 @@ function Friends({
 
   const refresh = useCallback(async () => {
     try {
-      setFriends(await listFriends(account.id))
+      const [people, shared] = await Promise.all([listFriends(account.id), listSharedMaps(account.id)])
+      setFriends(people)
+      setMaps(shared)
     } catch (err) {
-      setFriends([])
+      setFriends((current) => current ?? [])
+      setMaps((current) => current ?? [])
       setError(explain(err))
     }
     // explain is left out on purpose: it changes with the language, the list doesn't
@@ -184,6 +204,16 @@ function Friends({
       await sendRequest(account.id, target)
       setName('')
     }, t.sent(target))
+  }
+
+  const createMap = (e: React.FormEvent) => {
+    e.preventDefault()
+    const title = mapName.trim()
+    if (!title) return
+    act(async () => {
+      await createSharedMap(title)
+      setMapName('')
+    })
   }
 
   const group = (state: Friend['state']) => friends?.filter((f) => f.state === state) ?? []
@@ -276,6 +306,64 @@ function Friends({
           </ul>
         </>
       )}
+
+      <h3>{t.shared}</h3>
+      <p className="dialog-note">{t.sharedHelp}</p>
+      <form className="invite" onSubmit={createMap}>
+        <input
+          value={mapName}
+          onChange={(e) => setMapName(e.target.value)}
+          placeholder={t.sharedName}
+          aria-label={t.sharedName}
+          maxLength={40}
+        />
+        <button className="primary" disabled={busy || !mapName.trim()}>
+          {t.create}
+        </button>
+      </form>
+      {maps && maps.length === 0 && <p className="dialog-note">{t.noShared}</p>}
+      <ul className="people shared">
+        {maps?.map((m) => {
+          const invitable = accepted.filter((f) => !m.members.some((x) => x.userId === f.userId))
+          return (
+            <li key={m.id}>
+              <span>
+                {m.name}
+                <small>{m.members.map((x) => `@${x.username}`).join(', ')}</small>
+              </span>
+              <button className="chip chip-strong" disabled={busy} onClick={() => act(() => onOpenShared(m))}>
+                {t.openMap}
+              </button>
+              {invitable.length > 0 && (
+                <select
+                  className="chip"
+                  value=""
+                  disabled={busy}
+                  aria-label={t.addFriend}
+                  onChange={(e) => {
+                    const userId = e.target.value
+                    if (userId) act(() => addSharedMember(m.id, userId))
+                  }}
+                >
+                  <option value="">{t.addFriend}</option>
+                  {invitable.map((f) => (
+                    <option key={f.userId} value={f.userId}>
+                      @{f.username}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button
+                className="chip"
+                disabled={busy}
+                onClick={() => act(() => (m.mine ? deleteSharedMap(m.id) : removeSharedMember(m.id, account.id)))}
+              >
+                {m.mine ? t.delete : t.leave}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
     </>
   )
 }
