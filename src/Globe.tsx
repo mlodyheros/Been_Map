@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
-import { countryAt, loadWorld, type World } from './geo'
+import { countryAt, levelFor, loadWorld, type World } from './geo'
 import { countryName, STRINGS, type Lang } from './i18n'
 import { BY_A2, flag, type MapMode, type Statuses } from './model'
 import {
@@ -33,6 +33,8 @@ const MIN_ZOOM = 0.8
 const MAX_ZOOM = 10
 const START: View = { lng: 15, lat: 38, zoom: 1 }
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+/** The globe spins freely; the flat map stops at its edges. */
+const wrapLng = (lng: number, mode: MapMode) => (mode === 'flat' ? clamp(lng, -180, 180) : lng)
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 
 const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, mode, lang, onPick }, ref) {
@@ -43,7 +45,7 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
   // Everything the render loop reads lives in one mutable object so that
   // dragging never goes through React.
   const state = useRef({
-    view: { ...START, lat: mode === 'flat' ? 12 : START.lat },
+    view: mode === 'flat' ? { lng: 10, lat: 12, zoom: 1 } : { ...START },
     world: null as World | null,
     statuses,
     people,
@@ -94,7 +96,11 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
 
     if (before.mode !== mode) {
       // a flat map reads best centred near the equator, the globe a little north of it
-      if (state.view.zoom < 1.3) state.view = { lng: state.view.lng, lat: mode === 'flat' ? 12 : START.lat, zoom: 1 }
+      if (mode === 'flat') {
+        // bring a globe that has been spun round back onto the map's -180…180 range
+        const lng = ((((state.view.lng + 180) % 360) + 360) % 360) - 180
+        state.view = state.view.zoom < 1.3 ? { lng: 10, lat: 12, zoom: 1 } : { ...state.view, lng }
+      } else if (state.view.zoom < 1.3) state.view = { lng: state.view.lng, lat: START.lat, zoom: 1 }
       state.velocity = { lng: 0, lat: 0 }
       state.fly = null
       const canvas = canvasRef.current
@@ -152,14 +158,15 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
         const { from, to, start, ms } = state.fly
         const t = clamp((now - start) / ms, 0, 1)
         const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-        const dLng = ((to.lng - from.lng + 540) % 360) - 180
+        // the globe turns the short way round; the flat map has no way round
+        const dLng = state.mode === 'flat' ? to.lng - from.lng : ((((to.lng - from.lng + 180) % 360) + 360) % 360) - 180
         view.lng = from.lng + dLng * e
         view.lat = from.lat + (to.lat - from.lat) * e
         view.zoom = from.zoom + (to.zoom - from.zoom) * e
         if (t < 1) animating = true
         else state.fly = null
       } else if (Math.abs(state.velocity.lng) + Math.abs(state.velocity.lat) > 0.02) {
-        view.lng += state.velocity.lng
+        view.lng = wrapLng(view.lng + state.velocity.lng, state.mode)
         view.lat = clamp(view.lat + state.velocity.lat, -85, 85)
         state.velocity.lng *= 0.93
         state.velocity.lat *= 0.93
@@ -173,7 +180,7 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       if (state.probe && !moving) probeHover()
       state.probe = null
 
-      const layer = state.world ? (moving ? state.world.coarse : state.world.detail) : null
+      const layer = state.world ? levelFor(state.world, view.zoom) : null
       const dpr = Math.min(devicePixelRatio || 1, 2)
       const scene = { mode: state.mode, view, layer, statuses: state.statuses, people: state.people }
 
@@ -237,7 +244,8 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       if (!reducedMotion()) {
         // opening move: the globe turns into place
         const to = { ...state.view }
-        state.fly = { from: { lng: to.lng - 70, lat: to.lat - 20, zoom: 0.9 }, to, start: performance.now(), ms: 1400 }
+        const from = state.mode === 'flat' ? { ...to, zoom: 0.88 } : { lng: to.lng - 70, lat: to.lat - 20, zoom: 0.9 }
+        state.fly = { from, to, start: performance.now(), ms: 1400 }
       }
       state.request()
     })
@@ -280,6 +288,8 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
 
     const pointers = new Map<number, { x: number; y: number }>()
     let travelled = 0
+    // a finger wobbles more than a mouse, so a touch needs to travel further before it counts as a drag
+    let dragging = false
     let pinch = 0
     let lastMove = 0
 
@@ -291,7 +301,10 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       }
       const [x, y] = local(e)
       pointers.set(e.pointerId, { x, y })
-      if (pointers.size === 1) travelled = 0
+      if (pointers.size === 1) {
+        travelled = 0
+        dragging = false
+      }
       if (pointers.size === 2) {
         const [a, b] = [...pointers.values()]
         pinch = Math.hypot(a.x - b.x, a.y - b.y)
@@ -321,14 +334,15 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
         const d = Math.hypot(a.x - b.x, a.y - b.y)
         if (pinch) state.view.zoom = clamp((state.view.zoom * d) / pinch, MIN_ZOOM, MAX_ZOOM)
         pinch = d
-        travelled = 99
+        dragging = true
       } else {
         const dx = x - prev.x
         const dy = y - prev.y
         travelled += Math.abs(dx) + Math.abs(dy)
-        if (travelled > 4) {
+        if (travelled > (e.pointerType === 'mouse' ? 4 : 10)) {
+          dragging = true
           const k = 57.3 / (baseScale(state.mode, state.size.w, state.size.h) * state.view.zoom)
-          state.view.lng -= dx * k
+          state.view.lng = wrapLng(state.view.lng - dx * k, state.mode)
           state.view.lat = clamp(state.view.lat + dy * k, -85, 85)
           // capped so one large jump between events can't spin the globe wildly
           state.velocity = { lng: clamp(-dx * k, -4, 4), lat: clamp(dy * k, -4, 4) }
@@ -347,7 +361,7 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       if (pointers.size) return
       canvas.style.cursor = 'grab'
 
-      if (travelled <= 4 && e.type === 'pointerup') {
+      if (!dragging && e.type === 'pointerup') {
         const [x, y] = local(e)
         const hit = pick(x, y)
         if (hit?.a2) {
@@ -366,7 +380,9 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       e.preventDefault()
       state.fly = null
       state.moving = true
-      state.view.zoom = clamp(state.view.zoom * Math.exp(-e.deltaY * 0.0022), MIN_ZOOM, MAX_ZOOM)
+      // a trackpad pinch arrives as ctrl+wheel with much smaller deltas than scrolling
+      const speed = e.ctrlKey ? 0.012 : 0.0022
+      state.view.zoom = clamp(state.view.zoom * Math.exp(-e.deltaY * speed), MIN_ZOOM, MAX_ZOOM)
       state.request()
     }
 
