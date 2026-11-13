@@ -14,7 +14,7 @@ import {
   type SharedMapInfo,
 } from './cloud'
 import Globe, { type GlobeHandle } from './Globe'
-import { LANGS, STRINGS, countryName, type Brush } from './i18n'
+import { STRINGS, countryName, type Brush } from './i18n'
 import {
   BY_A2,
   CONTINENT_IDS,
@@ -139,6 +139,19 @@ function useSheet() {
 const DownloadIcon = () => (
   <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M10 3v9m0 0 3.5-3.5M10 12 6.5 8.5M4 15.5h12" />
+  </svg>
+)
+
+const GlobeIcon = () => (
+  <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+    <circle cx="10" cy="10" r="7" />
+    <path d="M3 10h14M10 3c2.4 2 2.4 12 0 14M10 3c-2.4 2-2.4 12 0 14" />
+  </svg>
+)
+
+const MapIcon = () => (
+  <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3 5.5 7.5 4l5 1.5L17 4v10.5L12.5 16l-5-1.5L3 16zM7.5 4v10.5M12.5 5.5V16" />
   </svg>
 )
 
@@ -403,6 +416,27 @@ export default function App() {
     [t.extras.people, stats.people],
   ] as const
 
+  const title = (
+    <>
+      <h1>
+        {viewing?.kind === 'friend'
+          ? t.account.viewing(viewing.username)
+          : viewing?.kind === 'shared'
+            ? viewing.name
+            : t.myMap}
+      </h1>
+      <p>
+        {viewing?.kind === 'shared'
+          ? `${t.account.shared} · ${t.account.people(viewing.members)}`
+          : viewing?.kind === 'friend'
+            ? t.account.common(common)
+            : account
+              ? `@${account.username}`
+              : t.localOnly}
+      </p>
+    </>
+  )
+
   const progress = (
     <>
       {stats.continents.map((c) => (
@@ -429,8 +463,45 @@ export default function App() {
     <div className="app" style={sheet.phone ? ({ '--peek': `${sheet.peek}px` } as React.CSSProperties) : undefined}>
       <main className="stage">
         <div className="topbar">
-        <header className="masthead">
           <p className="wordmark">been map</p>
+
+          <div className="tools">
+            <div className="switch" role="radiogroup" aria-label={t.viewLabel}>
+              {MODES.map((m) => (
+                <button
+                  key={m}
+                  role="radio"
+                  aria-checked={mode === m}
+                  aria-label={m === 'globe' ? t.globe : t.map}
+                  onClick={() => setSettings((s) => ({ ...s, mode: m }))}
+                >
+                  {m === 'globe' ? <GlobeIcon /> : <MapIcon />}
+                  <span>{m === 'globe' ? t.globe : t.map}</span>
+                </button>
+              ))}
+            </div>
+            <button
+              className="tool"
+              aria-label={t.language}
+              title={t.language}
+              onClick={() => setSettings((s) => ({ ...s, lang: s.lang === 'pl' ? 'en' : 'pl' }))}
+            >
+              {lang.toUpperCase()}
+            </button>
+            <button
+              className="tool"
+              onClick={() => globe.current && downloadPoster(globe.current.snapshot(1600), stats, lang)}
+              aria-label={t.download}
+              title={t.download}
+            >
+              <DownloadIcon />
+            </button>
+            <button className="tool tool-account" onClick={() => setAccountOpen(true)} aria-label={t.account.title}>
+              {account ? <b className="avatar">{account.username.slice(0, 1).toUpperCase()}</b> : <UserIcon />}
+              <span>{account ? `@${account.username}` : t.account.open}</span>
+            </button>
+          </div>
+
           <p className="tally">
             <span className="tally-number" key={stats.been}>
               {stats.been}
@@ -440,58 +511,18 @@ export default function App() {
               <span>{t.landShare(landShareLabel(stats.landShare))}</span>
             </span>
           </p>
-          {empty && <p className="hint">{t.hint}</p>}
-        </header>
-        <div className="tools">
-          <div className="tools-row">
-            <div className="switch" role="radiogroup" aria-label={t.viewLabel}>
-              {MODES.map((m) => (
-                <button
-                  key={m}
-                  role="radio"
-                  aria-checked={mode === m}
-                  onClick={() => setSettings((s) => ({ ...s, mode: m }))}
-                >
-                  {m === 'globe' ? t.globe : t.map}
-                </button>
-              ))}
-            </div>
-            <div className="switch" role="radiogroup" aria-label={t.language}>
-              {LANGS.map((l) => (
-                <button
-                  key={l}
-                  role="radio"
-                  aria-checked={lang === l}
-                  lang={l}
-                  onClick={() => setSettings((s) => ({ ...s, lang: l }))}
-                >
-                  {l.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="tools-row">
-            <button className="tool tool-zoom" onClick={() => globe.current?.zoomBy(1.5)} aria-label={t.zoomIn}>
-              +
-            </button>
-            <button className="tool tool-zoom" onClick={() => globe.current?.zoomBy(1 / 1.5)} aria-label={t.zoomOut}>
-              −
-            </button>
-            <button
-              className="tool tool-wide"
-              onClick={() => globe.current && downloadPoster(globe.current.snapshot(1600), stats, lang)}
-              aria-label={t.download}
-            >
-              <DownloadIcon />
-              <span>{t.download}</span>
-            </button>
-            <button className="tool tool-wide tool-account" onClick={() => setAccountOpen(true)}>
-              {account ? <b className="avatar">{account.username.slice(0, 1).toUpperCase()}</b> : <UserIcon />}
-              <span>{account ? `@${account.username}` : t.account.open}</span>
-            </button>
-          </div>
         </div>
+
+        <div className="zoom">
+          <button onClick={() => globe.current?.zoomBy(1.5)} aria-label={t.zoomIn}>
+            +
+          </button>
+          <button onClick={() => globe.current?.zoomBy(1 / 1.5)} aria-label={t.zoomOut}>
+            −
+          </button>
         </div>
+
+        {empty && <p className="hint">{t.hint}</p>}
 
         {toast && (
           <p className="toast" key={toast.id} role="status">
@@ -551,6 +582,7 @@ export default function App() {
             : undefined
         }
       >
+        <header className="panel-title on-desktop">{title}</header>
         <section className="continents on-desktop" aria-label={t.progress}>
           {progress}
         </section>
@@ -583,6 +615,7 @@ export default function App() {
         <i className="safe-area" ref={sheet.safeArea} />
 
         <div className="list">
+          <header className="panel-title on-phone">{title}</header>
           <section className="continents on-phone" aria-label={t.progress}>
             {progress}
           </section>

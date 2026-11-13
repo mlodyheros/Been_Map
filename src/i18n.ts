@@ -9,6 +9,8 @@ export type Brush = Status | 'people'
 
 interface Strings {
   title: string
+  myMap: string
+  localOnly: string
   countriesOf(n: number, total: number): string
   countries(n: number): string
   landShare(pct: string): string
@@ -96,10 +98,12 @@ function plCountries(n: number) {
 
 const pl: Strings = {
   title: 'Been Map — Twoja mapa podróży',
+  myMap: 'Moja mapa',
+  localOnly: 'Zapisana na tym urządzeniu',
   countriesOf: (n, total) => `${plCountries(n)} z ${total}`,
   countries: plCountries,
   landShare: (pct) => `${pct} lądów świata`,
-  hint: 'Kliknij kraj na mapie, żeby go zaznaczyć.',
+  hint: 'Wybierz status i kliknij kraj na mapie',
   brushLabel: 'Zaznaczam jako',
   brush: {
     visited: 'Odwiedzone',
@@ -206,10 +210,12 @@ const pl: Strings = {
 
 const en: Strings = {
   title: 'Been Map — Your travel map',
+  myMap: 'My map',
+  localOnly: 'Saved on this device',
   countriesOf: (n, total) => `${n === 1 ? 'country' : 'countries'} of ${total}`,
   countries: (n) => (n === 1 ? 'country' : 'countries'),
   landShare: (pct) => `${pct} of the world's land`,
-  hint: 'Click a country on the map to mark it.',
+  hint: 'Pick a status, then click a country on the map',
   brushLabel: 'Mark as',
   brush: {
     visited: 'Visited',

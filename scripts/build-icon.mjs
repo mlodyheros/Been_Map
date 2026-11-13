@@ -5,10 +5,10 @@ import { writeFileSync } from 'node:fs'
 const SIZE = 180
 const SS = 4 // supersampling per axis
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
-const INK = hex('#151A33')
-const SEA = hex('#C9D3F2')
-const LAND = hex('#FFFFFF')
-const MARK = hex('#2F45E0')
+const INK = hex('#141833')
+const SEA = hex('#2F45E0')
+const LAND = hex('#F8F4EA')
+const MARK = hex('#FF5A36')
 
 const inCircle = (x, y, cx, cy, r) => (x - cx) ** 2 + (y - cy) ** 2 <= r * r
 function colorAt(x, y) {

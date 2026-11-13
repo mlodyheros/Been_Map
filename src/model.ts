@@ -22,13 +22,13 @@ export const BY_A2 = new Map(COUNTRIES.map((c) => [c.a2, c]))
 export const CONTINENT_IDS: ContinentId[] = ['EU', 'AS', 'AF', 'NA', 'SA', 'OC', 'AN']
 
 export const STATUSES: { id: Status; color: string }[] = [
-  { id: 'visited', color: '#2F45E0' },
-  { id: 'lived', color: '#D92B73' },
-  { id: 'transit', color: '#F0A21A' },
-  { id: 'wish', color: '#12A592' },
+  { id: 'visited', color: '#FF5A36' },
+  { id: 'lived', color: '#141833' },
+  { id: 'transit', color: '#FFB21A' },
+  { id: 'wish', color: '#17B890' },
 ]
 /** Ring colour of the "know people from" marker. */
-export const PEOPLE_COLOR = '#8A4BF0'
+export const PEOPLE_COLOR = '#E91E8C'
 export const STATUS_BY_ID = Object.fromEntries(STATUSES.map((s) => [s.id, s])) as Record<
   Status,
   (typeof STATUSES)[number]
