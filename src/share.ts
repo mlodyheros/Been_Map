@@ -1,11 +1,13 @@
 import { STRINGS, type Lang } from './i18n'
-import { PEOPLE_COLOR, STATUSES, landShareLabel, type Stats } from './model'
+import { PEOPLE_COLOR, STATUSES, landShareLabel, type MapStyle, type Stats } from './model'
 
 const W = 1600
 const H = 2000
 
 /** Composes a shareable poster around a globe snapshot and downloads it as PNG. */
-export async function downloadPoster(globe: HTMLCanvasElement, stats: Stats, lang: Lang) {
+export async function downloadPoster(globe: HTMLCanvasElement, stats: Stats, lang: Lang, style: MapStyle) {
+  const dark = style !== 'plain'
+  const ink = dark ? '#FFFFFF' : '#141833'
   const t = STRINGS[lang]
   await document.fonts.ready
   const canvas = document.createElement('canvas')
@@ -13,11 +15,11 @@ export async function downloadPoster(globe: HTMLCanvasElement, stats: Stats, lan
   canvas.height = H
   const ctx = canvas.getContext('2d')!
 
-  ctx.fillStyle = '#F1F2F7'
+  ctx.fillStyle = dark ? '#070A18' : '#F1F2F7'
   ctx.fillRect(0, 0, W, H)
   ctx.drawImage(globe, 0, 150, W, W)
 
-  ctx.fillStyle = '#141833'
+  ctx.fillStyle = ink
   ctx.textBaseline = 'alphabetic'
   ctx.font = '700 44px Unbounded, sans-serif'
   ctx.fillText('been map', 110, 150)
@@ -28,7 +30,7 @@ export async function downloadPoster(globe: HTMLCanvasElement, stats: Stats, lan
   const after = 104 + ctx.measureText(count).width + 36
   ctx.font = '500 52px Onest, sans-serif'
   ctx.fillText(t.countries(stats.been), after, H - 262)
-  ctx.fillStyle = '#5D6485'
+  ctx.fillStyle = dark ? '#A9B1D6' : '#5D6485'
   ctx.fillText(t.landShare(landShareLabel(stats.landShare)), after, H - 194)
 
   ctx.font = '500 30px Onest, sans-serif'
@@ -39,7 +41,7 @@ export async function downloadPoster(globe: HTMLCanvasElement, stats: Stats, lan
     ctx.beginPath()
     ctx.arc(x + 12, H - 102, 12, 0, Math.PI * 2)
     ctx.fill()
-    ctx.fillStyle = '#141833'
+    ctx.fillStyle = ink
     ctx.fillText(label, x + 36, H - 92)
     x += ctx.measureText(label).width + 78
   }

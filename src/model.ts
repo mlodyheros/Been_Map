@@ -23,7 +23,7 @@ export const CONTINENT_IDS: ContinentId[] = ['EU', 'AS', 'AF', 'NA', 'SA', 'OC',
 
 export const STATUSES: { id: Status; color: string }[] = [
   { id: 'visited', color: '#FF5A36' },
-  { id: 'lived', color: '#141833' },
+  { id: 'lived', color: '#6C4DF5' },
   { id: 'transit', color: '#FFB21A' },
   { id: 'wish', color: '#17B890' },
 ]
@@ -156,20 +156,28 @@ export function savePeople(people: ReadonlySet<string>) {
 }
 
 export type MapMode = 'globe' | 'flat'
+/** How the map is drawn: flat colours, satellite terrain, or the Earth at night. */
+export type MapStyle = 'plain' | 'terrain' | 'night'
+export const MAP_STYLES: MapStyle[] = ['plain', 'terrain', 'night']
 export interface Settings {
   lang: 'pl' | 'en'
   mode: MapMode
+  style: MapStyle
+  /** Whether the side panel next to the map is open (desktop). */
+  panel: boolean
 }
 
 const SETTINGS_KEY = 'been-map:settings:v1'
 
 export function loadSettings(): Settings {
-  const fallback: Settings = { lang: navigator.language.toLowerCase().startsWith('pl') ? 'pl' : 'en', mode: 'globe' }
+  const fallback: Settings = { lang: navigator.language.toLowerCase().startsWith('pl') ? 'pl' : 'en', mode: 'globe', style: 'plain', panel: true }
   try {
     const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}')
     return {
       lang: raw.lang === 'pl' || raw.lang === 'en' ? raw.lang : fallback.lang,
       mode: raw.mode === 'flat' || raw.mode === 'globe' ? raw.mode : fallback.mode,
+      style: MAP_STYLES.includes(raw.style) ? raw.style : fallback.style,
+      panel: raw.panel !== false,
     }
   } catch {
     return fallback

@@ -22,39 +22,21 @@ import { STRINGS, type Lang } from './i18n'
 interface Props {
   lang: Lang
   account: AccountInfo | null
-  onClose(): void
   onViewFriend(friend: Friend): Promise<void>
   onOpenShared(map: SharedMapInfo): Promise<void>
 }
 
-export default function Account({ lang, account, onClose, onViewFriend, onOpenShared }: Props) {
+export default function Account({ lang, account, onViewFriend, onOpenShared }: Props) {
   const t = STRINGS[lang].account
   const explain = (e: unknown) => t.errors[e instanceof CloudError ? e.code : 'unknown']
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    addEventListener('keydown', onKey)
-    return () => removeEventListener('keydown', onKey)
-  }, [onClose])
-
   return (
-    <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-label={t.title}>
-        <button className="dialog-close" onClick={onClose} aria-label={t.close}>
-          ×
-        </button>
-        {account ? (
-          <Friends
-            lang={lang}
-            account={account}
-            explain={explain}
-            onViewFriend={onViewFriend}
-            onOpenShared={onOpenShared}
-          />
-        ) : (
-          <SignIn lang={lang} explain={explain} />
-        )}
-      </div>
+    <div className="dialog account">
+      {account ? (
+        <Friends lang={lang} account={account} explain={explain} onViewFriend={onViewFriend} onOpenShared={onOpenShared} />
+      ) : (
+        <SignIn lang={lang} explain={explain} />
+      )}
     </div>
   )
 }
