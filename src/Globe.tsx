@@ -350,7 +350,10 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
 
     const local = (e: PointerEvent | WheelEvent) => {
       const box = canvas.getBoundingClientRect()
-      return [e.clientX - box.left, e.clientY - box.top] as [number, number]
+      // the map is briefly scaled while it swaps between globe and flat; taps must still land where they look
+      const kx = box.width ? state.size.w / box.width : 1
+      const ky = box.height ? state.size.h / box.height : 1
+      return [(e.clientX - box.left) * kx, (e.clientY - box.top) * ky] as [number, number]
     }
 
     const pick = (x: number, y: number): Hit | null => {
