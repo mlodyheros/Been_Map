@@ -3,7 +3,7 @@ import { createBackdrop, type Backdrop } from './backdrop'
 import { createDetailLoader } from './detail'
 import type { Pin } from './extras'
 import { countryAt, levelFor, loadWorld, type Shape, type World } from './geo'
-import { loadRegions, regionAt, regionName, type Regions } from './regions'
+import { REGION_COUNTRIES, loadRegions, nearestRegion, regionAt, regionName, type Regions } from './regions'
 import { countryName, STRINGS, type Lang } from './i18n'
 import { BY_A2, flag, type MapMode, type MapStyle, type Statuses } from './model'
 import {
@@ -376,10 +376,13 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
         }
       }
       const a2 = countryAt(world.detail, at[0], at[1], state.hover)
-      const region =
-        state.regionLevel && !state.compare && state.regionData
-          ? (regionAt(state.regionData, at[0], at[1])?.id ?? null)
-          : null
+      let region: string | null = null
+      if (state.regionLevel && !state.compare && state.regionData) {
+        region = regionAt(state.regionData, at[0], at[1])?.id ?? null
+        if (!region && a2 && REGION_COUNTRIES.has(a2)) {
+          region = nearestRegion(state.regionData, a2, at[0], at[1], 15)?.id ?? null
+        }
+      }
       return { a2, region, pin, lng: at[0], lat: at[1] }
     }
 
