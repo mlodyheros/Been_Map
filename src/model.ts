@@ -156,9 +156,11 @@ export function savePeople(people: ReadonlySet<string>) {
 }
 
 export type MapMode = 'globe' | 'flat'
-/** How the map is drawn: flat colours, satellite terrain, or the Earth at night. */
-export type MapStyle = 'plain' | 'terrain' | 'night'
-export const MAP_STYLES: MapStyle[] = ['plain', 'terrain', 'night']
+/** How the map is drawn: flat colours, satellite terrain, the Earth at night, or land coloured by height. */
+export type MapStyle = 'plain' | 'terrain' | 'night' | 'relief'
+export const MAP_STYLES: MapStyle[] = ['plain', 'terrain', 'night', 'relief']
+/** Styles shown against the dark of space; their captions are light. */
+export const isDark = (style: MapStyle) => style === 'terrain' || style === 'night'
 export interface Settings {
   lang: 'pl' | 'en'
   mode: MapMode

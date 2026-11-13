@@ -97,17 +97,17 @@ button {
 }
 
 /* photo styles: the Earth hangs in space */
-.app:not([data-style='plain']) .stage {
+.app[data-dark] .stage {
   background: radial-gradient(120% 90% at 50% 45%, #111a3c 0%, #05070f 65%);
 }
 
-.app:not([data-style='plain']) .stage .wordmark,
-.app:not([data-style='plain']) .stage .tally-number,
-.app:not([data-style='plain']) .stage .tally-text strong {
+.app[data-dark] .stage .wordmark,
+.app[data-dark] .stage .tally-number,
+.app[data-dark] .stage .tally-text strong {
   color: #fff;
 }
 
-.app:not([data-style='plain']) .stage .tally-text {
+.app[data-dark] .stage .tally-text {
   color: rgba(255, 255, 255, 0.66);
 }
 
@@ -1769,7 +1769,16 @@ select.chip {
   }
 
   .pages button {
-    padding: 0 11px;
+    padding: 0 10px;
+  }
+
+  /* four map styles and two views share the row with the tabs */
+  .topbar .switch button {
+    padding: 0 7px;
+  }
+
+  .tools {
+    gap: 5px;
   }
 
   .panel-toggle {
@@ -2016,7 +2025,7 @@ select.chip {
 }
 
 /* the count stays readable when a zoomed-in photo runs underneath it */
-.app:not([data-style='plain']) .stage .tally,
-.app:not([data-style='plain']) .stage .wordmark {
+.app[data-dark] .stage .tally,
+.app[data-dark] .stage .wordmark {
   text-shadow: 0 1px 10px rgba(3, 5, 14, 0.9);
 }

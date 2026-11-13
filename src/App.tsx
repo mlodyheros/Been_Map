@@ -37,6 +37,7 @@ import {
   CONTINENT_IDS,
   COUNTRIES,
   MAP_STYLES,
+  isDark,
   PEOPLE_COLOR,
   STATUSES,
   STATUS_BY_ID,
@@ -189,6 +190,7 @@ const STYLE_ICONS: Record<MapStyle, React.ReactNode> = {
   plain: <path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4M13.2 10a3.2 3.2 0 1 1-6.4 0 3.2 3.2 0 0 1 6.4 0Z" />,
   terrain: <path d="m2.5 15.5 5-9 3.2 5.4 1.8-2.6 5 6.2z" />,
   night: <path d="M16 11.6A6.5 6.5 0 0 1 8.4 4a6.5 6.5 0 1 0 7.6 7.6Z" />,
+  relief: <path d="M2.5 16h15M4.5 12.5h11M7 9h6M9 5.5h2" />,
 }
 const StyleIcon = ({ id }: { id: MapStyle }) => (
   <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -595,7 +597,7 @@ export default function App() {
 
   const showPin = (pin: Pin) => {
     setPage('map')
-    globe.current?.flyToPoint(pin.lng, pin.lat, 4)
+    globe.current?.flyToPoint(pin.lng, pin.lat, 7)
     sheet.setSnap('peek')
   }
 
@@ -854,7 +856,7 @@ export default function App() {
                     style={ink(PIN_COLOR)}
                     onClick={() => {
                       if (togglePin({ id, name: c.name, lat: c.lat, lng: c.lng, cc: c.cc })) {
-                        globe.current?.flyToPoint(c.lng, c.lat, 4)
+                        globe.current?.flyToPoint(c.lng, c.lat, 7)
                       }
                     }}
                   >
@@ -955,6 +957,7 @@ export default function App() {
     <div
       className="app"
       data-style={style}
+      data-dark={isDark(style) || undefined}
       data-panel={settings.panel ? 'open' : 'closed'}
       style={sheet.phone ? ({ '--peek': `${sheet.peek}px` } as React.CSSProperties) : undefined}
     >

@@ -2,9 +2,10 @@ import type { MapMode, MapStyle } from './model'
 import type { View } from './paint'
 
 /**
- * The photographic layer under the country shapes: a satellite or night-lights
- * image wrapped onto the globe (or unrolled onto the flat map) by a shader.
- * The plain style has no image and leaves this layer empty.
+ * The picture under the country shapes, drawn by a shader: a satellite or
+ * night-lights image wrapped onto the globe (or unrolled onto the flat map),
+ * or land coloured by its height with the mountains standing out in 3D.
+ * The plain style has no picture and leaves this layer empty.
  */
 
 const VERTEX = `#version 300 es
@@ -13,18 +14,73 @@ void main() { gl_Position = vec4(corner, 0.0, 1.0); }`
 
 const FRAGMENT = `#version 300 es
 precision highp float;
-uniform sampler2D image;
+uniform sampler2D image;      // the whole world, for the terrain and night styles
+uniform sampler2D close;      // sharper imagery for the area being looked at
+uniform sampler2D closeRelief; // shaded relief for that area: mid grey is flat ground, dark is water
+uniform sampler2D heights;    // height above the sea, 0…1
 uniform vec2 centre;   // device pixels, y up
 uniform float scale;   // device pixels per unit
 uniform vec4 turn;     // sin/cos of the view longitude, sin/cos of the view latitude
 uniform vec2 origin;   // flat map: unit position of the view centre
 uniform bool flatMap;
-uniform bool night;
-uniform sampler2D close; // sharper imagery for the area being looked at
-uniform vec4 box;        // its west edge, north edge, width and height in radians; width 0 = none
+uniform int kind;      // 1 terrain, 2 night, 3 height colours
+uniform vec4 box;      // the sharp area's west edge, north edge, width and height in radians
+uniform bool hasClose;
+uniform bool hasRelief;
+uniform bool hasHeights;
+uniform float bulge;   // how far the highest mountains stand out of the globe, in globe radii
+uniform float heightLod;
 out vec4 colour;
 
 const float PI = 3.141592653589793;
+const float FLAT_GREY = 0.675; // what level ground looks like in the relief imagery
+
+// from "right, up, towards the viewer" to a direction on the Earth
+vec3 toEarth(vec3 v) {
+  float forward = v.z * turn.w - v.y * turn.z;
+  return vec3(forward * turn.y - v.x * turn.x, forward * turn.x + v.x * turn.y, v.z * turn.z + v.y * turn.w);
+}
+
+float heightAt(float lng, float lat) {
+  return textureLod(heights, vec2(lng / (2.0 * PI) + 0.5, 0.5 - lat / PI), heightLod).r;
+}
+
+float heightOf(vec3 dir) {
+  return heightAt(atan(dir.y, dir.x), asin(clamp(dir.z, -1.0, 1.0)));
+}
+
+// Light from the north-west, the way printed maps are shaded: 1 on level ground.
+float hillshade(float lng, float lat) {
+  float d = 2.0 * PI / 2048.0 * exp2(heightLod);
+  float east = (heightAt(lng + d, lat) - heightAt(lng - d, lat)) / (2.0 * d * max(cos(lat), 0.2));
+  float north = (heightAt(lng, lat + d) - heightAt(lng, lat - d)) / (2.0 * d);
+  vec3 normal = normalize(vec3(-east * 0.11, -north * 0.11, 1.0));
+  vec3 light = normalize(vec3(-0.55, 0.55, 0.62));
+  return clamp(1.0 + (dot(normal, light) - light.z) * 1.9, 0.5, 1.45);
+}
+
+// Lowlands green, hills sand, mountains brown, the highest and the polar ice white.
+// The height map is not linear: it stores roughly the square root of the height,
+// so 0.25 is about 400 m, 0.5 about 2 km, 0.8 about 4.8 km.
+vec3 heightColour(float h, float lat) {
+  vec3 c = vec3(0.64, 0.79, 0.60);
+  c = mix(c, vec3(0.80, 0.88, 0.66), smoothstep(0.00, 0.10, h));
+  c = mix(c, vec3(0.95, 0.91, 0.70), smoothstep(0.10, 0.27, h));
+  c = mix(c, vec3(0.89, 0.76, 0.56), smoothstep(0.27, 0.46, h));
+  c = mix(c, vec3(0.72, 0.56, 0.43), smoothstep(0.46, 0.66, h));
+  c = mix(c, vec3(0.62, 0.53, 0.50), smoothstep(0.66, 0.84, h));
+  // the snow line: about 5.5 km up in the tropics, at sea level near the poles
+  // (Antarctica is ice right to its coast; the Arctic lands thaw further north)
+  float polar = lat < 0.0 ? smoothstep(1.02, 1.12, -lat) : smoothstep(1.08, 1.36, lat);
+  float snowline = mix(0.86, 0.0, polar);
+  return mix(c, vec3(0.97, 0.97, 0.98), smoothstep(snowline, snowline + 0.07, h));
+}
+
+// How far the ground stands out of the globe, 0…1: true height, undoing the map's square root.
+float rise(vec3 dir) {
+  float h = heightOf(dir);
+  return h * h;
+}
 
 void main() {
   vec2 p = (gl_FragCoord.xy - centre) / scale;
@@ -53,14 +109,52 @@ void main() {
     float lng = x / (0.8707 + a * (-0.131979 + a * (-0.013791 + a * a * a * (0.003971 - 0.001529 * a))));
     outside = abs(p.y + origin.y) > 1.4224 || abs(lng) > PI;
     around = vec2(cos(lng), sin(lng));
+  } else if (bulge > 0.0) {
+    // The globe with its mountains standing out: walk along the line of sight
+    // from just above the highest peak until it goes under the ground.
+    float r2 = dot(p, p);
+    float top = 1.0 + bulge;
+    outside = r2 > top * top;
+    float from = sqrt(max(top * top - r2, 0.0));
+    float to = r2 < 1.0 ? sqrt(1.0 - r2) : 0.0;
+    float z = to;
+    bool hit = r2 < 1.0;
+    float before = from;
+    for (int i = 1; i <= 28; i++) {
+      float at = mix(from, to, float(i) / 28.0);
+      vec3 point = vec3(p, at);
+      float radius = length(point);
+      if (radius <= 1.0 + bulge * rise(toEarth(point / radius))) {
+        // close in on the exact spot between the last two samples
+        float above = before;
+        float below = at;
+        for (int j = 0; j < 5; j++) {
+          float mid = 0.5 * (above + below);
+          vec3 m = vec3(p, mid);
+          float mr = length(m);
+          if (mr <= 1.0 + bulge * rise(toEarth(m / mr))) below = mid;
+          else above = mid;
+        }
+        z = below;
+        hit = true;
+        break;
+      }
+      before = at;
+    }
+    if (!hit) outside = true;
+    vec3 surface = vec3(p, z);
+    vec3 earth = toEarth(surface / max(length(surface), 1e-6));
+    depth = clamp(z, 0.0, 1.0);
+    lat = asin(clamp(earth.z, -1.0, 1.0));
+    around = earth.xy;
   } else {
     float r = min(dot(p, p), 1.0);
     outside = dot(p, p) > 1.0;
     depth = sqrt(1.0 - r);
     cover = clamp((1.0 - sqrt(r)) * scale, 0.0, 1.0);
-    float forward = depth * turn.w - p.y * turn.z;
-    lat = asin(clamp(depth * turn.z + p.y * turn.w, -1.0, 1.0));
-    around = vec2(forward * turn.y - p.x * turn.x, forward * turn.x + p.x * turn.y);
+    vec3 earth = toEarth(vec3(p, depth));
+    lat = asin(clamp(earth.z, -1.0, 1.0));
+    around = earth.xy;
   }
 
   float size = max(dot(around, around), 1e-6);
@@ -72,35 +166,71 @@ void main() {
     around.x * dFdy(around.y) - around.y * dFdy(around.x)
   ) / (size * 2.0 * PI);
   vec2 dv = vec2(dFdx(v), dFdy(v));
-  vec3 c = textureGrad(image, vec2(u, v), vec2(du.x, dv.x), vec2(du.y, dv.y)).rgb;
+  vec3 c = kind == 3 ? vec3(0.0) : textureGrad(image, vec2(u, v), vec2(du.x, dv.x), vec2(du.y, dv.y)).rgb;
   if (outside) discard;
-  if (night) c *= 1.5;
 
+  // the sharper pictures of the area being looked at, blended out towards their edge
+  float sharpness = 0.0;
+  vec3 sharp = vec3(0.0);
+  float relief = FLAT_GREY;
+  float reliefShare = 0.0;
   if (box.z > 0.0) {
     vec2 q = vec2(mod(lng - box.x, 2.0 * PI) / box.z, (box.y - lat) / box.w);
     if (q.x > 0.0 && q.x < 1.0 && q.y > 0.0 && q.y < 1.0) {
       vec2 k = vec2(2.0 * PI / box.z, PI / box.w);
-      vec4 sharp = textureGrad(close, q, vec2(du.x, dv.x) * k, vec2(du.y, dv.y) * k);
-      // blend out towards the edge of the sharp area so it has no visible border
       vec2 edge = smoothstep(0.0, 0.06, q) * smoothstep(0.0, 0.06, 1.0 - q);
-      c = mix(c, sharp.rgb, sharp.a * edge.x * edge.y);
+      if (hasClose) {
+        vec4 t = textureGrad(close, q, vec2(du.x, dv.x) * k, vec2(du.y, dv.y) * k);
+        sharp = t.rgb;
+        sharpness = t.a * edge.x * edge.y;
+      }
+      if (hasRelief) {
+        vec4 t = textureGrad(closeRelief, q, vec2(du.x, dv.x) * k, vec2(du.y, dv.y) * k);
+        relief = t.r;
+        reliefShare = t.a * edge.x * edge.y;
+      }
     }
   }
 
-  if (night) {
+  // how the ground is lit: from the fine relief where there is some, else from the height map
+  float coarse = hasHeights ? hillshade(lng, lat) : 1.0;
+  float water = smoothstep(0.44, 0.36, relief) * reliefShare;
+  float fine = clamp(relief / FLAT_GREY, 0.55, 1.45);
+  float shade = mix(coarse, mix(fine, 1.0, water), reliefShare);
+
+  if (kind == 1) {
+    c = mix(c, sharp, sharpness);
+    // a little more colour than the photo has, and the relief picked out
+    c = mix(vec3(dot(c, vec3(0.3, 0.59, 0.11))), c, 1.18);
+    c *= mix(1.0, shade, 0.6);
+    c *= mix(0.55, 1.0, pow(depth, 0.45));
+    c += vec3(0.25, 0.42, 0.75) * pow(1.0 - depth, 4.0) * 0.6;
+  } else if (kind == 2) {
+    // the sharper night image has paler ground than the bundled one; bring the two together
+    c = mix(c * 1.5, sharp * vec3(0.72, 0.76, 0.86), sharpness);
+    // city lights are warm, the ground is blue: separate them and let the lights glow
+    float glow = max(c.r - 0.72 * c.b, 0.0) * mix(1.0, 1.3, sharpness);
+    vec3 ground = c * mix(0.75, 1.0, smoothstep(0.0, 0.25, glow)) * mix(1.0, shade, 0.7);
+    c = ground + vec3(1.0, 0.78, 0.50) * (glow * 0.55 + glow * glow * 0.7);
     c += vec3(0.004, 0.008, 0.024);
     c += vec3(0.10, 0.22, 0.55) * pow(1.0 - depth, 3.0);
   } else {
-    c *= mix(0.55, 1.0, pow(depth, 0.45));
-    c += vec3(0.25, 0.42, 0.75) * pow(1.0 - depth, 4.0) * 0.6;
+    float h = hasHeights ? heightOf(vec3(around / sqrt(size) * cos(lat), sin(lat))) : 0.0;
+    c = heightColour(h, lat) * mix(1.0, shade, 0.85);
+    c = mix(c, vec3(0.80, 0.88, 0.96), water);
   }
-  colour = vec4(c * cover, cover);
+  colour = vec4(clamp(c, 0.0, 1.0) * cover, cover);
 }`
 
-const FILES: Record<Exclude<MapStyle, 'plain'>, string> = {
+type Photo = 'terrain' | 'night'
+const FILES: Record<Photo | 'heights', string> = {
   terrain: 'textures/terrain.jpg',
   night: 'textures/night.jpg',
+  heights: 'textures/height.png',
 }
+const KIND: Record<Exclude<MapStyle, 'plain'>, number> = { terrain: 1, night: 2, relief: 3 }
+/** How far the highest peaks stand out of the globe at zoom 1, in globe radii: about 25 times life size. */
+const BULGE = 0.035
 
 const RAD = Math.PI / 180
 // same constants as d3's Natural Earth projection, for the flat map's origin
@@ -125,7 +255,10 @@ export interface Backdrop {
 
 export interface Detail {
   style: MapStyle
-  image: HTMLCanvasElement
+  /** The picture itself, more detailed than the bundled one. */
+  image: HTMLCanvasElement | null
+  /** Shaded relief of the same area. */
+  relief: HTMLCanvasElement | null
   /** Degrees: west edge, north edge, width, height. */
   west: number
   north: number
@@ -163,25 +296,36 @@ export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): B
     turn: at('turn'),
     origin: at('origin'),
     flatMap: at('flatMap'),
-    night: at('night'),
+    kind: at('kind'),
     box: at('box'),
+    hasClose: at('hasClose'),
+    hasRelief: at('hasRelief'),
+    hasHeights: at('hasHeights'),
+    bulge: at('bulge'),
+    heightLod: at('heightLod'),
   }
-  gl.uniform1i(at('image'), 0)
-  gl.uniform1i(at('close'), 1)
+  // one texture unit per picture
+  const UNIT = { image: 0, close: 1, closeRelief: 2, heights: 3 }
+  for (const [name, unit] of Object.entries(UNIT)) gl.uniform1i(at(name), unit)
 
-  let detail: Detail | null = null
-  const detailTexture = gl.createTexture()!
+  const upload = (texture: WebGLTexture, unit: number, source: TexImageSource, format: number, repeat: boolean) => {
+    gl.activeTexture(gl.TEXTURE0 + unit)
+    gl.bindTexture(gl.TEXTURE_2D, texture)
+    gl.texImage2D(gl.TEXTURE_2D, 0, format, format, gl.UNSIGNED_BYTE, source)
+    gl.generateMipmap(gl.TEXTURE_2D)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  }
 
   const textures = new Map<string, WebGLTexture | 'loading'>()
-  const textureFor = (style: Exclude<MapStyle, 'plain'>) => {
-    const known = textures.get(style)
+  const textureFor = (name: keyof typeof FILES) => {
+    const known = textures.get(name)
     if (known) return known === 'loading' ? null : known
-    textures.set(style, 'loading')
+    textures.set(name, 'loading')
     const image = new Image()
     image.onload = () => {
-      const texture = gl.createTexture()!
-      gl.activeTexture(gl.TEXTURE0)
-      gl.bindTexture(gl.TEXTURE_2D, texture)
       const limit = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number
       let source: TexImageSource = image
       if (image.width > limit) {
@@ -192,19 +336,19 @@ export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): B
         small.getContext('2d')!.drawImage(image, 0, 0, small.width, small.height)
         source = small
       }
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, source)
-      gl.generateMipmap(gl.TEXTURE_2D)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-      textures.set(style, texture)
+      const texture = gl.createTexture()!
+      upload(texture, name === 'heights' ? UNIT.heights : UNIT.image, source, gl.RGB, true)
+      textures.set(name, texture)
       onLoad()
     }
-    image.onerror = () => textures.delete(style)
-    image.src = FILES[style]
+    image.onerror = () => textures.delete(name)
+    image.src = FILES[name]
     return null
   }
+
+  let detail: Detail | null = null
+  const closeTexture = gl.createTexture()!
+  const reliefTexture = gl.createTexture()!
 
   const clear = () => {
     gl.viewport(0, 0, canvas.width, canvas.height)
@@ -216,16 +360,8 @@ export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): B
     clear,
     setDetail(next) {
       detail = next
-      if (!next) return
-      gl.activeTexture(gl.TEXTURE1)
-      gl.bindTexture(gl.TEXTURE_2D, detailTexture)
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, next.image)
-      gl.generateMipmap(gl.TEXTURE_2D)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-      gl.activeTexture(gl.TEXTURE0)
+      if (next?.image) upload(closeTexture, UNIT.close, next.image, gl.RGBA, false)
+      if (next?.relief) upload(reliefTexture, UNIT.closeRelief, next.relief, gl.RGBA, false)
     },
     draw(style, mode, width, height, scale, view) {
       if (canvas.width !== width || canvas.height !== height) {
@@ -234,13 +370,31 @@ export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): B
       }
       clear()
       if (style === 'plain' || gl.isContextLost()) return true
-      const texture = textureFor(style)
-      if (!texture) return false
-      gl.activeTexture(gl.TEXTURE0)
-      gl.bindTexture(gl.TEXTURE_2D, texture)
-      if (detail && detail.style === style) {
-        gl.uniform4f(uniforms.box, detail.west * RAD, detail.north * RAD, detail.width * RAD, detail.height * RAD)
-      } else gl.uniform4f(uniforms.box, 0, 0, 0, 0)
+
+      // the height map gives every style its relief; only the height colours cannot do without it
+      const heights = textureFor('heights')
+      const image = style === 'relief' ? null : textureFor(style)
+      if (style === 'relief' ? !heights : !image) return false
+
+      if (image) {
+        gl.activeTexture(gl.TEXTURE0 + UNIT.image)
+        gl.bindTexture(gl.TEXTURE_2D, image)
+      }
+      if (heights) {
+        gl.activeTexture(gl.TEXTURE0 + UNIT.heights)
+        gl.bindTexture(gl.TEXTURE_2D, heights)
+      }
+      const sharp = detail && detail.style === style ? detail : null
+      gl.activeTexture(gl.TEXTURE0 + UNIT.close)
+      gl.bindTexture(gl.TEXTURE_2D, closeTexture)
+      gl.activeTexture(gl.TEXTURE0 + UNIT.closeRelief)
+      gl.bindTexture(gl.TEXTURE_2D, reliefTexture)
+      if (sharp) gl.uniform4f(uniforms.box, sharp.west * RAD, sharp.north * RAD, sharp.width * RAD, sharp.height * RAD)
+      else gl.uniform4f(uniforms.box, 0, 0, 0, 0)
+      gl.uniform1i(uniforms.hasClose, sharp?.image ? 1 : 0)
+      gl.uniform1i(uniforms.hasRelief, sharp?.relief ? 1 : 0)
+      gl.uniform1i(uniforms.hasHeights, heights ? 1 : 0)
+
       gl.uniform2f(uniforms.centre, width / 2, height / 2)
       gl.uniform1f(uniforms.scale, scale)
       gl.uniform4f(
@@ -252,7 +406,11 @@ export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): B
       )
       gl.uniform2f(uniforms.origin, flatX(view.lng * RAD, view.lat * RAD), flatY(view.lat * RAD))
       gl.uniform1i(uniforms.flatMap, mode === 'flat' ? 1 : 0)
-      gl.uniform1i(uniforms.night, style === 'night' ? 1 : 0)
+      gl.uniform1i(uniforms.kind, KIND[style])
+      // closer in, the mountains stand out less, so they stay a few pixels tall rather than towering
+      gl.uniform1f(uniforms.bulge, style === 'relief' && mode === 'globe' ? BULGE / Math.pow(view.zoom, 0.8) : 0)
+      // the height map has 2048 points round the world; read it no finer than the screen shows it
+      gl.uniform1f(uniforms.heightLod, Math.max(0, Math.log2(2048 / (2 * Math.PI) / scale)))
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
       return true
     },
