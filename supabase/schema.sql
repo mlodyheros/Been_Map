@@ -27,16 +27,21 @@ create table if not exists public.friendships (
 create unique index if not exists friendships_pair
   on public.friendships (least(requester, addressee), greatest(requester, addressee));
 
--- A profile is created together with the account, from the username given at sign-up.
+-- A profile is created together with the account, from the username given at
+-- sign-up. Accounts made through Google or Apple arrive without one; they pick
+-- a username afterwards (claim_username below).
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  name text := lower(new.raw_user_meta_data ->> 'username');
 begin
-  insert into public.profiles (id, username)
-  values (new.id, lower(new.raw_user_meta_data ->> 'username'));
+  if name ~ '^[a-z0-9_]{3,20}$' then
+    insert into public.profiles (id, username) values (new.id, name);
+  end if;
   return new;
 end;
 $$;
@@ -267,3 +272,65 @@ exception
   when duplicate_object or undefined_object then null;
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Places, regions and notes; public links; usernames for Google/Apple accounts.
+-- ---------------------------------------------------------------------------
+
+-- Everything on a personal map beyond the country markings, as one document:
+-- { "pins": [...], "regions": {...}, "notes": {...} }
+alter table public.maps add column if not exists extras jsonb not null default '{}'::jsonb;
+
+-- Whether anyone with the link may look at this person's map.
+alter table public.profiles add column if not exists is_public boolean not null default false;
+
+drop policy if exists "own profile can be changed" on public.profiles;
+create policy "own profile can be changed" on public.profiles
+  for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
+
+-- the only thing people change on their profile is the public switch
+revoke update on public.profiles from authenticated;
+grant update (is_public) on public.profiles to authenticated;
+
+-- Gives a signed-in account without a profile its username.
+create or replace function public.claim_username(name text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'not signed in';
+  end if;
+  if lower(name) !~ '^[a-z0-9_]{3,20}$' then
+    raise exception 'invalid username';
+  end if;
+  insert into public.profiles (id, username) values (auth.uid(), lower(name));
+end;
+$$;
+
+revoke execute on function public.claim_username(text) from public, anon;
+grant execute on function public.claim_username(text) to authenticated;
+
+-- A public map, for the read-only link. Works without signing in; returns
+-- nothing unless the owner switched the link on. Notes stay private.
+create or replace function public.public_map(name text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'username', p.username,
+    'statuses', coalesce(m.statuses, '{}'::jsonb),
+    'people', coalesce(m.people, '[]'::jsonb),
+    'extras', coalesce(m.extras, '{}'::jsonb) - 'notes'
+  )
+  from public.profiles p
+  left join public.maps m on m.user_id = p.id
+  where p.username = lower(name) and p.is_public;
+$$;
+
+grant execute on function public.public_map(text) to anon, authenticated;

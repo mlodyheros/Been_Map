@@ -2,6 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   CloudError,
   acceptRequest,
+  claimUsername,
+  isPublic,
+  oauthProviders,
+  setPublic,
+  signInWith,
+  type Provider,
   addSharedMember,
   createSharedMap,
   deleteSharedMap,
@@ -32,12 +38,128 @@ export default function Account({ lang, account, onViewFriend, onOpenShared }: P
 
   return (
     <div className="dialog account">
-      {account ? (
+      {account && !account.username ? (
+        <ChooseUsername lang={lang} explain={explain} />
+      ) : account ? (
         <Friends lang={lang} account={account} explain={explain} onViewFriend={onViewFriend} onOpenShared={onOpenShared} />
       ) : (
         <SignIn lang={lang} explain={explain} />
       )}
     </div>
+  )
+}
+
+/** Accounts that came in through Google or Apple have no username yet. */
+function ChooseUsername({ lang, explain }: { lang: Lang; explain(e: unknown): string }) {
+  const t = STRINGS[lang].account
+  const [username, setUsername] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await claimUsername(username)
+      // the session update re-renders this as the friends view
+    } catch (err) {
+      setError(explain(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <h2>{t.chooseTitle}</h2>
+      <p className="dialog-note">{t.chooseHelp}</p>
+      <form onSubmit={submit}>
+        <label>
+          {t.username}
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value.toLowerCase())}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            required
+          />
+          <small>{t.usernameHelp}</small>
+        </label>
+        {error && (
+          <p className="dialog-error" role="alert">
+            {error}
+          </p>
+        )}
+        <button className="primary" disabled={busy}>
+          {busy ? t.working : t.chooseSave}
+        </button>
+        <button type="button" className="link" onClick={signOut}>
+          {t.logOut}
+        </button>
+      </form>
+    </>
+  )
+}
+
+/** The switch that lets anyone with the link see the map, and the link itself. */
+function PublicLink({ lang, account, explain }: { lang: Lang; account: AccountInfo; explain(e: unknown): string }) {
+  const t = STRINGS[lang].account
+  const [on, setOn] = useState<boolean | null>(null)
+  const [note, setNote] = useState('')
+  const link = `${location.origin}${location.pathname}?u=${account.username}`
+
+  useEffect(() => {
+    let current = true
+    isPublic(account.id).then(
+      (value) => current && setOn(value),
+      () => current && setOn(false),
+    )
+    return () => {
+      current = false
+    }
+  }, [account.id])
+
+  const flip = async () => {
+    const next = !on
+    setOn(next)
+    setNote('')
+    try {
+      await setPublic(account.id, next)
+    } catch (err) {
+      setOn(!next)
+      setNote(explain(err))
+    }
+  }
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(link)
+      setNote(t.copied)
+    } catch {
+      setNote(link) // no clipboard access: show it so it can be copied by hand
+    }
+  }
+
+  return (
+    <>
+      <h3>{t.publicTitle}</h3>
+      <p className="dialog-note">{t.publicHelp}</p>
+      <label className="toggle">
+        <input type="checkbox" checked={Boolean(on)} disabled={on === null} onChange={flip} />
+        <span>{t.publicOn}</span>
+      </label>
+      {on && (
+        <p className="public-link">
+          <code>{link}</code>
+          <button className="chip chip-strong" onClick={copy}>
+            {t.copyLink}
+          </button>
+        </p>
+      )}
+      {note && <p className="dialog-note">{note}</p>}
+    </>
   )
 }
 
@@ -50,6 +172,15 @@ function SignIn({ lang, explain }: { lang: Lang; explain(e: unknown): string }) 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [providers, setProviders] = useState<Provider[]>([])
+
+  useEffect(() => {
+    let current = true
+    oauthProviders().then((list) => current && setProviders(list))
+    return () => {
+      current = false
+    }
+  }, [])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -72,6 +203,16 @@ function SignIn({ lang, explain }: { lang: Lang; explain(e: unknown): string }) 
     <>
       <h2>{t.title}</h2>
       <p className="dialog-note">{t.pitch}</p>
+      {providers.length > 0 && (
+        <div className="providers">
+          {providers.map((p) => (
+            <button key={p} className="provider" onClick={() => signInWith(p).catch((err) => setError(explain(err)))}>
+              {t[p]}
+            </button>
+          ))}
+          <span>{t.or}</span>
+        </div>
+      )}
       <div className="switch dialog-switch" role="radiogroup">
         {(['logIn', 'signUp'] as const).map((m) => (
           <button key={m} role="radio" aria-checked={mode === m} onClick={() => (setMode(m), setError(''))}>
@@ -346,6 +487,8 @@ function Friends({
           )
         })}
       </ul>
+
+      <PublicLink lang={lang} account={account} explain={explain} />
     </>
   )
 }

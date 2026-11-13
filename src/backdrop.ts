@@ -20,6 +20,8 @@ uniform vec4 turn;     // sin/cos of the view longitude, sin/cos of the view lat
 uniform vec2 origin;   // flat map: unit position of the view centre
 uniform bool flatMap;
 uniform bool night;
+uniform sampler2D close; // sharper imagery for the area being looked at
+uniform vec4 box;        // its west edge, north edge, width and height in radians; width 0 = none
 out vec4 colour;
 
 const float PI = 3.141592653589793;
@@ -62,17 +64,31 @@ void main() {
   }
 
   float size = max(dot(around, around), 1e-6);
-  float u = atan(around.y, around.x) / (2.0 * PI) + 0.5;
+  float lng = atan(around.y, around.x);
+  float u = lng / (2.0 * PI) + 0.5;
   float v = 0.5 - lat / PI;
   vec2 du = vec2(
     around.x * dFdx(around.y) - around.y * dFdx(around.x),
     around.x * dFdy(around.y) - around.y * dFdy(around.x)
   ) / (size * 2.0 * PI);
-  vec3 c = textureGrad(image, vec2(u, v), vec2(du.x, dFdx(v)), vec2(du.y, dFdy(v))).rgb;
+  vec2 dv = vec2(dFdx(v), dFdy(v));
+  vec3 c = textureGrad(image, vec2(u, v), vec2(du.x, dv.x), vec2(du.y, dv.y)).rgb;
   if (outside) discard;
+  if (night) c *= 1.5;
+
+  if (box.z > 0.0) {
+    vec2 q = vec2(mod(lng - box.x, 2.0 * PI) / box.z, (box.y - lat) / box.w);
+    if (q.x > 0.0 && q.x < 1.0 && q.y > 0.0 && q.y < 1.0) {
+      vec2 k = vec2(2.0 * PI / box.z, PI / box.w);
+      vec4 sharp = textureGrad(close, q, vec2(du.x, dv.x) * k, vec2(du.y, dv.y) * k);
+      // blend out towards the edge of the sharp area so it has no visible border
+      vec2 edge = smoothstep(0.0, 0.06, q) * smoothstep(0.0, 0.06, 1.0 - q);
+      c = mix(c, sharp.rgb, sharp.a * edge.x * edge.y);
+    }
+  }
 
   if (night) {
-    c = c * 1.5 + vec3(0.004, 0.008, 0.024);
+    c += vec3(0.004, 0.008, 0.024);
     c += vec3(0.10, 0.22, 0.55) * pow(1.0 - depth, 3.0);
   } else {
     c *= mix(0.55, 1.0, pow(depth, 0.45));
@@ -103,6 +119,18 @@ export interface Backdrop {
   /** Paints the layer; returns false while the style's image is still loading. */
   draw(style: MapStyle, mode: MapMode, width: number, height: number, scale: number, view: View): boolean
   clear(): void
+  /** Sharper imagery to lay over part of the map, or null to drop it. */
+  setDetail(detail: Detail | null): void
+}
+
+export interface Detail {
+  style: MapStyle
+  image: HTMLCanvasElement
+  /** Degrees: west edge, north edge, width, height. */
+  west: number
+  north: number
+  width: number
+  height: number
 }
 
 export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): Backdrop | null {
@@ -136,7 +164,13 @@ export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): B
     origin: at('origin'),
     flatMap: at('flatMap'),
     night: at('night'),
+    box: at('box'),
   }
+  gl.uniform1i(at('image'), 0)
+  gl.uniform1i(at('close'), 1)
+
+  let detail: Detail | null = null
+  const detailTexture = gl.createTexture()!
 
   const textures = new Map<string, WebGLTexture | 'loading'>()
   const textureFor = (style: Exclude<MapStyle, 'plain'>) => {
@@ -146,6 +180,7 @@ export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): B
     const image = new Image()
     image.onload = () => {
       const texture = gl.createTexture()!
+      gl.activeTexture(gl.TEXTURE0)
       gl.bindTexture(gl.TEXTURE_2D, texture)
       const limit = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number
       let source: TexImageSource = image
@@ -179,6 +214,19 @@ export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): B
 
   return {
     clear,
+    setDetail(next) {
+      detail = next
+      if (!next) return
+      gl.activeTexture(gl.TEXTURE1)
+      gl.bindTexture(gl.TEXTURE_2D, detailTexture)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, next.image)
+      gl.generateMipmap(gl.TEXTURE_2D)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      gl.activeTexture(gl.TEXTURE0)
+    },
     draw(style, mode, width, height, scale, view) {
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width
@@ -188,7 +236,11 @@ export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): B
       if (style === 'plain' || gl.isContextLost()) return true
       const texture = textureFor(style)
       if (!texture) return false
+      gl.activeTexture(gl.TEXTURE0)
       gl.bindTexture(gl.TEXTURE_2D, texture)
+      if (detail && detail.style === style) {
+        gl.uniform4f(uniforms.box, detail.west * RAD, detail.north * RAD, detail.width * RAD, detail.height * RAD)
+      } else gl.uniform4f(uniforms.box, 0, 0, 0, 0)
       gl.uniform2f(uniforms.centre, width / 2, height / 2)
       gl.uniform1f(uniforms.scale, scale)
       gl.uniform4f(
