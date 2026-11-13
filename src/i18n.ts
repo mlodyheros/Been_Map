@@ -1,5 +1,5 @@
 import type { CloudErrorCode } from './cloud'
-import type { ContinentId, Country, Status } from './model'
+import type { ContinentId, Country, MapStyle, Status } from './model'
 
 export type Lang = 'pl' | 'en'
 export const LANGS: Lang[] = ['pl', 'en']
@@ -14,10 +14,16 @@ interface Strings {
   countriesOf(n: number, total: number): string
   countries(n: number): string
   landShare(pct: string): string
-  hint: string
   brushLabel: string
   brush: Record<Brush, string>
   continents: Record<ContinentId, string>
+  pages: { map: string; hub: string }
+  panelShow: string
+  panelHide: string
+  options: string
+  countriesTitle: string
+  styleLabel: string
+  styles: Record<MapStyle, string>
   viewLabel: string
   globe: string
   map: string
@@ -103,7 +109,6 @@ const pl: Strings = {
   countriesOf: (n, total) => `${plCountries(n)} z ${total}`,
   countries: plCountries,
   landShare: (pct) => `${pct} lądów świata`,
-  hint: 'Wybierz status i kliknij kraj na mapie',
   brushLabel: 'Zaznaczam jako',
   brush: {
     visited: 'Odwiedzone',
@@ -121,9 +126,16 @@ const pl: Strings = {
     OC: 'Oceania',
     AN: 'Antarktyda',
   },
+  pages: { map: 'Mapa', hub: 'Panel' },
+  panelShow: 'Pokaż listę krajów',
+  panelHide: 'Schowaj listę krajów',
+  options: 'Opcje',
+  countriesTitle: 'Kraje',
+  styleLabel: 'Wygląd mapy',
+  styles: { plain: 'Jasna', terrain: 'Teren', night: 'Noc' },
   viewLabel: 'Widok',
   globe: 'Globus',
-  map: 'Mapa',
+  map: 'Płaska',
   language: 'Język',
   zoomIn: 'Przybliż',
   zoomOut: 'Oddal',
@@ -215,7 +227,6 @@ const en: Strings = {
   countriesOf: (n, total) => `${n === 1 ? 'country' : 'countries'} of ${total}`,
   countries: (n) => (n === 1 ? 'country' : 'countries'),
   landShare: (pct) => `${pct} of the world's land`,
-  hint: 'Pick a status, then click a country on the map',
   brushLabel: 'Mark as',
   brush: {
     visited: 'Visited',
@@ -233,9 +244,16 @@ const en: Strings = {
     OC: 'Oceania',
     AN: 'Antarctica',
   },
+  pages: { map: 'Map', hub: 'Dashboard' },
+  panelShow: 'Show the country list',
+  panelHide: 'Hide the country list',
+  options: 'Options',
+  countriesTitle: 'Countries',
+  styleLabel: 'Map style',
+  styles: { plain: 'Light', terrain: 'Terrain', night: 'Night' },
   viewLabel: 'View',
   globe: 'Globe',
-  map: 'Map',
+  map: 'Flat',
   language: 'Language',
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',

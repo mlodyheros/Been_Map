@@ -14,11 +14,12 @@ import {
   type SharedMapInfo,
 } from './cloud'
 import Globe, { type GlobeHandle } from './Globe'
-import { STRINGS, countryName, type Brush } from './i18n'
+import { LANGS, STRINGS, countryName, type Brush } from './i18n'
 import {
   BY_A2,
   CONTINENT_IDS,
   COUNTRIES,
+  MAP_STYLES,
   PEOPLE_COLOR,
   STATUSES,
   STATUS_BY_ID,
@@ -36,6 +37,7 @@ import {
   saveSettings,
   saveStatuses,
   type MapMode,
+  type MapStyle,
   type Statuses,
 } from './model'
 import { downloadPoster } from './share'
@@ -46,6 +48,8 @@ const FILTERS: Filter[] = ['all', 'marked', 'wish']
 const BRUSHES: { id: Brush; color: string }[] = [...STATUSES, { id: 'people', color: PEOPLE_COLOR }]
 const BRUSH_COLOR = Object.fromEntries(BRUSHES.map((b) => [b.id, b.color])) as Record<Brush, string>
 const MODES: MapMode[] = ['globe', 'flat']
+type Page = 'map' | 'hub'
+const PAGES: Page[] = ['map', 'hub']
 
 type Viewing = CloudMap &
   ({ kind: 'friend'; username: string } | { kind: 'shared'; id: string; name: string; members: number })
@@ -155,10 +159,14 @@ const MapIcon = () => (
   </svg>
 )
 
-const UserIcon = () => (
-  <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-    <circle cx="10" cy="7" r="3.2" />
-    <path d="M3.8 16.5c.9-2.7 3.3-4.2 6.2-4.2s5.3 1.5 6.2 4.2" />
+const STYLE_ICONS: Record<MapStyle, React.ReactNode> = {
+  plain: <path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4M13.2 10a3.2 3.2 0 1 1-6.4 0 3.2 3.2 0 0 1 6.4 0Z" />,
+  terrain: <path d="m2.5 15.5 5-9 3.2 5.4 1.8-2.6 5 6.2z" />,
+  night: <path d="M16 11.6A6.5 6.5 0 0 1 8.4 4a6.5 6.5 0 1 0 7.6 7.6Z" />,
+}
+const StyleIcon = ({ id }: { id: MapStyle }) => (
+  <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {STYLE_ICONS[id]}
   </svg>
 )
 
@@ -172,7 +180,7 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [account, setAccount] = useState<AccountInfo | null>(null)
-  const [accountOpen, setAccountOpen] = useState(false)
+  const [page, setPage] = useState<Page>('map')
   const [syncFailed, setSyncFailed] = useState(false)
   /** A map shown in place of your own: a friend's (read-only) or a shared one (everyone marks it). */
   const [viewing, setViewing] = useState<Viewing | null>(null)
@@ -180,7 +188,7 @@ export default function App() {
   const globe = useRef<GlobeHandle>(null)
   const sheet = useSheet()
 
-  const { lang, mode } = settings
+  const { lang, mode, style } = settings
   const t = STRINGS[lang]
 
   // The map's click handler needs the latest values without re-subscribing.
@@ -275,7 +283,7 @@ export default function App() {
   const viewFriend = useCallback(async (friend: Friend) => {
     const map = await fetchMap(friend.userId)
     setViewing({ kind: 'friend', username: friend.username, statuses: map?.statuses ?? {}, people: map?.people ?? new Set() })
-    setAccountOpen(false)
+    setPage('map')
   }, [])
   const openShared = useCallback(async (info: SharedMapInfo) => {
     const map = await fetchSharedMap(info.id)
@@ -287,7 +295,7 @@ export default function App() {
       statuses: map?.statuses ?? {},
       people: map?.people ?? new Set(),
     })
-    setAccountOpen(false)
+    setPage('map')
   }, [])
 
   // While a shared map is open, pick up other people's marks: live where
@@ -317,7 +325,6 @@ export default function App() {
     const timer = setTimeout(() => setToast(null), 1800)
     return () => clearTimeout(timer)
   }, [toast])
-  const closeAccount = useCallback(() => setAccountOpen(false), [])
 
   /**
    * Applies the active marking to a country; a second tap with the same marking clears it.
@@ -373,6 +380,7 @@ export default function App() {
   }, [])
 
   const showOnMap = (a2: string) => {
+    setPage('map')
     globe.current?.flyTo(a2)
     // on a phone the sheet would otherwise cover the country
     sheet.setSnap('peek')
@@ -408,7 +416,6 @@ export default function App() {
     return CONTINENT_IDS.map((id) => ({ id, rows: rows.filter((c) => c.cont === id) })).filter((g) => g.rows.length)
   }, [query, filter, shown.statuses, shown.people, sorted])
 
-  const empty = !viewing && Object.keys(statuses).length === 0 && people.size === 0 && !toast
   const extras = [
     [t.extras.territories, stats.territories],
     [t.extras.transit, stats.transit],
@@ -459,58 +466,179 @@ export default function App() {
     </>
   )
 
+  const pages = (
+    <nav className="pages" role="tablist">
+      {PAGES.map((id) => (
+        <button key={id} role="tab" aria-selected={page === id} onClick={() => setPage(id)}>
+          {t.pages[id]}
+        </button>
+      ))}
+    </nav>
+  )
+
+  const modeSwitch = (
+    <div className="switch" role="radiogroup" aria-label={t.viewLabel}>
+      {MODES.map((m) => (
+        <button
+          key={m}
+          role="radio"
+          aria-checked={mode === m}
+          aria-label={m === 'globe' ? t.globe : t.map}
+          onClick={() => setSettings((s) => ({ ...s, mode: m }))}
+        >
+          {m === 'globe' ? <GlobeIcon /> : <MapIcon />}
+          <span>{m === 'globe' ? t.globe : t.map}</span>
+        </button>
+      ))}
+    </div>
+  )
+
+  const styleSwitch = (
+    <div className="switch" role="radiogroup" aria-label={t.styleLabel}>
+      {MAP_STYLES.map((id) => (
+        <button
+          key={id}
+          role="radio"
+          aria-checked={style === id}
+          aria-label={t.styles[id]}
+          title={t.styles[id]}
+          onClick={() => setSettings((s) => ({ ...s, style: id }))}
+        >
+          <StyleIcon id={id} />
+          <span>{t.styles[id]}</span>
+        </button>
+      ))}
+    </div>
+  )
+
+  const brushBar = (
+    <div className="brush" role="radiogroup" aria-label={t.brushLabel} hidden={readOnly}>
+      <span className="brush-label">{t.brushLabel}</span>
+      {BRUSHES.map((b) => (
+        <button
+          key={b.id}
+          role="radio"
+          aria-checked={brush === b.id}
+          className="brush-option"
+          style={ink(b.color)}
+          onClick={() => setBrush(b.id)}
+        >
+          <i className={`swatch swatch-${b.id}`} />
+          {t.brush[b.id]}
+        </button>
+      ))}
+    </div>
+  )
+
+  const tally = (
+    <p className="tally">
+      <span className="tally-number" key={stats.been}>
+        {stats.been}
+      </span>
+      <span className="tally-text">
+        <strong>{t.countriesOf(stats.been, stats.total)}</strong>
+        <span>{t.landShare(landShareLabel(stats.landShare))}</span>
+      </span>
+    </p>
+  )
+
+  const finder = (
+    <div className="finder">
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder={t.search}
+        aria-label={t.search}
+        onFocus={() => sheet.setSnap('full')}
+      />
+      <div className="filters" role="tablist">
+        {FILTERS.map((f) => (
+          <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)}>
+            {t.filters[f]}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+
+  const rows = (
+    <>
+      {groups.length === 0 && (
+        <p className="list-empty">{query ? t.noMatch(query) : filter === 'wish' ? t.emptyWish : t.emptyMarked}</p>
+      )}
+      {groups.map((g) => (
+        <section key={g.id}>
+          <h2>
+            {t.continents[g.id]}
+            <span>
+              {g.rows.filter((c) => isBeen(shown.statuses[c.a2])).length}/{g.rows.length}
+            </span>
+          </h2>
+          <ul>
+            {g.rows.map((c) => {
+              const s = shown.statuses[c.a2]
+              const knows = shown.people.has(c.a2)
+              const name = countryName(c, lang)
+              // the circle shows the layer the brush edits: people ring or status fill
+              const on = brush === 'people' ? knows : Boolean(s)
+              const applied = brush === 'people' ? knows : s === brush
+              return (
+                <li key={c.a2}>
+                  <button className="row-name" onClick={() => showOnMap(c.a2)} title={t.showOnMap}>
+                    <span className="row-flag">{flag(c.a2)}</span>
+                    <span className="row-label">{name}</span>
+                    {knows && <i className="swatch swatch-people" style={ink(PEOPLE_COLOR)} title={t.peopleBadge} />}
+                  </button>
+                  <button
+                    className="row-mark"
+                    data-on={on || undefined}
+                    data-layer={brush === 'people' ? 'people' : s}
+                    style={ink(brush === 'people' || !s ? BRUSH_COLOR[brush] : STATUS_BY_ID[s].color)}
+                    onClick={() => toggle(c.a2)}
+                    disabled={readOnly}
+                    title={applied ? t.unmark(name) : t.mark(t.brush[brush], name)}
+                    aria-label={applied ? t.unmark(name) : t.mark(t.brush[brush], name)}
+                  >
+                    {s && (
+                      <span className="row-status" style={ink(STATUS_BY_ID[s].color)}>
+                        {brush === 'people' && <i className={`swatch swatch-${s}`} />}
+                        {t.brush[s]}
+                      </span>
+                    )}
+                    <i />
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      ))}
+    </>
+  )
+
+  const syncNote = syncFailed && (
+    <p className="sync-failed" role="status">
+      {t.account.syncFailed}
+    </p>
+  )
+
   return (
-    <div className="app" style={sheet.phone ? ({ '--peek': `${sheet.peek}px` } as React.CSSProperties) : undefined}>
+    <div
+      className="app"
+      data-style={style}
+      data-panel={settings.panel ? 'open' : 'closed'}
+      style={sheet.phone ? ({ '--peek': `${sheet.peek}px` } as React.CSSProperties) : undefined}
+    >
       <main className="stage">
         <div className="topbar">
           <p className="wordmark">been map</p>
-
+          {pages}
           <div className="tools">
-            <div className="switch" role="radiogroup" aria-label={t.viewLabel}>
-              {MODES.map((m) => (
-                <button
-                  key={m}
-                  role="radio"
-                  aria-checked={mode === m}
-                  aria-label={m === 'globe' ? t.globe : t.map}
-                  onClick={() => setSettings((s) => ({ ...s, mode: m }))}
-                >
-                  {m === 'globe' ? <GlobeIcon /> : <MapIcon />}
-                  <span>{m === 'globe' ? t.globe : t.map}</span>
-                </button>
-              ))}
-            </div>
-            <button
-              className="tool"
-              aria-label={t.language}
-              title={t.language}
-              onClick={() => setSettings((s) => ({ ...s, lang: s.lang === 'pl' ? 'en' : 'pl' }))}
-            >
-              {lang.toUpperCase()}
-            </button>
-            <button
-              className="tool"
-              onClick={() => globe.current && downloadPoster(globe.current.snapshot(1600), stats, lang)}
-              aria-label={t.download}
-              title={t.download}
-            >
-              <DownloadIcon />
-            </button>
-            <button className="tool tool-account" onClick={() => setAccountOpen(true)} aria-label={t.account.title}>
-              {account ? <b className="avatar">{account.username.slice(0, 1).toUpperCase()}</b> : <UserIcon />}
-              <span>{account ? `@${account.username}` : t.account.open}</span>
-            </button>
+            {modeSwitch}
+            {styleSwitch}
           </div>
-
-          <p className="tally">
-            <span className="tally-number" key={stats.been}>
-              {stats.been}
-            </span>
-            <span className="tally-text">
-              <strong>{t.countriesOf(stats.been, stats.total)}</strong>
-              <span>{t.landShare(landShareLabel(stats.landShare))}</span>
-            </span>
-          </p>
+          {tally}
         </div>
 
         <div className="zoom">
@@ -522,7 +650,17 @@ export default function App() {
           </button>
         </div>
 
-        {empty && <p className="hint">{t.hint}</p>}
+        <button
+          className="panel-toggle"
+          aria-expanded={settings.panel}
+          aria-label={settings.panel ? t.panelHide : t.panelShow}
+          title={settings.panel ? t.panelHide : t.panelShow}
+          onClick={() => setSettings((s) => ({ ...s, panel: !s.panel }))}
+        >
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m8 5 5 5-5 5" />
+          </svg>
+        </button>
 
         {toast && (
           <p className="toast" key={toast.id} role="status">
@@ -531,7 +669,15 @@ export default function App() {
           </p>
         )}
 
-        <Globe ref={globe} statuses={shown.statuses} people={shown.people} mode={mode} lang={lang} onPick={toggle} />
+        <Globe
+          ref={globe}
+          statuses={shown.statuses}
+          people={shown.people}
+          mode={mode}
+          style={style}
+          lang={lang}
+          onPick={toggle}
+        />
 
         {viewing && (
           <div className="viewing" data-above-brush={!readOnly || undefined}>
@@ -549,23 +695,7 @@ export default function App() {
             <button onClick={() => setViewing(null)}>{t.account.back}</button>
           </div>
         )}
-        <div className="brush" role="radiogroup" aria-label={t.brushLabel} hidden={readOnly}>
-          <span className="brush-label">{t.brushLabel}</span>
-          {BRUSHES.map((b) => (
-            <button
-              key={b.id}
-              role="radio"
-              aria-checked={brush === b.id}
-              className="brush-option"
-              style={ink(b.color)}
-              onClick={() => setBrush(b.id)}
-            >
-              <i className={`swatch swatch-${b.id}`} />
-              {t.brush[b.id]}
-            </button>
-          ))}
-        </div>
-
+        {brushBar}
       </main>
 
       <aside
@@ -589,28 +719,8 @@ export default function App() {
 
         <div className="sheet-head" ref={sheet.head}>
           <button className="grip" aria-label={t.sheet} {...sheet.grip} />
-        {syncFailed && (
-          <p className="sync-failed" role="status">
-            {t.account.syncFailed}
-          </p>
-        )}
-        <div className="finder">
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t.search}
-            aria-label={t.search}
-            onFocus={() => sheet.setSnap('full')}
-          />
-          <div className="filters" role="tablist">
-            {FILTERS.map((f) => (
-              <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)}>
-                {t.filters[f]}
-              </button>
-            ))}
-          </div>
-        </div>
+          {syncNote}
+          {finder}
         </div>
         <i className="safe-area" ref={sheet.safeArea} />
 
@@ -619,69 +729,73 @@ export default function App() {
           <section className="continents on-phone" aria-label={t.progress}>
             {progress}
           </section>
-          {groups.length === 0 && (
-            <p className="list-empty">
-              {query ? t.noMatch(query) : filter === 'wish' ? t.emptyWish : t.emptyMarked}
-            </p>
-          )}
-          {groups.map((g) => (
-            <section key={g.id}>
-              <h2>
-                {t.continents[g.id]}
-                <span>
-                  {g.rows.filter((c) => isBeen(shown.statuses[c.a2])).length}/{g.rows.length}
-                </span>
-              </h2>
-              <ul>
-                {g.rows.map((c) => {
-                  const s = shown.statuses[c.a2]
-                  const knows = shown.people.has(c.a2)
-                  const name = countryName(c, lang)
-                  // the circle shows the layer the brush edits: people ring or status fill
-                  const on = brush === 'people' ? knows : Boolean(s)
-                  const applied = brush === 'people' ? knows : s === brush
-                  return (
-                    <li key={c.a2}>
-                      <button className="row-name" onClick={() => showOnMap(c.a2)} title={t.showOnMap}>
-                        <span className="row-flag">{flag(c.a2)}</span>
-                        <span className="row-label">{name}</span>
-                        {knows && <i className="swatch swatch-people" style={ink(PEOPLE_COLOR)} title={t.peopleBadge} />}
-                      </button>
-                      <button
-                        className="row-mark"
-                        data-on={on || undefined}
-                        data-layer={brush === 'people' ? 'people' : s}
-                        style={ink(brush === 'people' || !s ? BRUSH_COLOR[brush] : STATUS_BY_ID[s].color)}
-                        onClick={() => toggle(c.a2)}
-                        disabled={readOnly}
-                        title={applied ? t.unmark(name) : t.mark(t.brush[brush], name)}
-                        aria-label={applied ? t.unmark(name) : t.mark(t.brush[brush], name)}
-                      >
-                        {s && (
-                          <span className="row-status" style={ink(STATUS_BY_ID[s].color)}>
-                            {brush === 'people' && <i className={`swatch swatch-${s}`} />}
-                            {t.brush[s]}
-                          </span>
-                        )}
-                        <i />
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            </section>
-          ))}
+          {page === 'map' && rows}
         </div>
       </aside>
 
-      {accountOpen && (
-        <Account
-          lang={lang}
-          account={account}
-          onClose={closeAccount}
-          onViewFriend={viewFriend}
-          onOpenShared={openShared}
-        />
+      {page === 'hub' && (
+        <div className="hub">
+          <header className="hub-bar">
+            <p className="wordmark">been map</p>
+            {pages}
+          </header>
+          <div className="hub-grid">
+            <div className="hub-column">
+              <section className="card">
+                <header className="panel-title">{title}</header>
+                {tally}
+                <div className="continents" aria-label={t.progress}>
+                  {progress}
+                </div>
+              </section>
+              <section className="card options">
+                <h2 className="card-title">{t.options}</h2>
+                <div className="option">
+                  <span>{t.viewLabel}</span>
+                  {modeSwitch}
+                </div>
+                <div className="option">
+                  <span>{t.styleLabel}</span>
+                  {styleSwitch}
+                </div>
+                <div className="option">
+                  <span>{t.language}</span>
+                  <div className="switch" role="radiogroup" aria-label={t.language}>
+                    {LANGS.map((l) => (
+                      <button
+                        key={l}
+                        role="radio"
+                        aria-checked={lang === l}
+                        onClick={() => setSettings((s) => ({ ...s, lang: l }))}
+                      >
+                        {l === 'pl' ? 'Polski' : 'English'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  className="primary"
+                  onClick={() => globe.current && downloadPoster(globe.current.snapshot(1600), stats, lang, style)}
+                >
+                  <DownloadIcon /> {t.download}
+                </button>
+              </section>
+            </div>
+
+            <section className="card countries">
+              <h2 className="card-title">{t.countriesTitle}</h2>
+              {brushBar}
+              {syncNote}
+              {finder}
+              <div className="list">{rows}</div>
+            </section>
+
+            <section className="card">
+              {account && <h2 className="card-title">{t.account.title}</h2>}
+              <Account lang={lang} account={account} onViewFriend={viewFriend} onOpenShared={openShared} />
+            </section>
+          </div>
+        </div>
       )}
     </div>
   )

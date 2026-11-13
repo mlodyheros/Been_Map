@@ -1,6 +1,6 @@
-import { geoDistance, geoGraticule10, geoNaturalEarth1, geoOrthographic, geoPath } from 'd3-geo'
+import { geoDistance, geoNaturalEarth1, geoOrthographic, geoPath } from 'd3-geo'
 import type { Layer, Shape } from './geo'
-import { BY_A2, PEOPLE_COLOR, STATUSES, type MapMode, type Status, type Statuses } from './model'
+import { BY_A2, PEOPLE_COLOR, STATUSES, type MapMode, type MapStyle, type Status, type Statuses } from './model'
 
 export interface View {
   /** Longitude / latitude at the centre of the map. */
@@ -19,6 +19,7 @@ export interface Pulse {
 
 export interface Scene {
   mode: MapMode
+  style: MapStyle
   view: View
   layer: Layer | null
   statuses: Statuses
@@ -30,10 +31,10 @@ export interface Overlay {
   pulses: Pulse[]
 }
 
-const SEA_TOP = '#4159F2'
-const SEA_BOTTOM = '#2337C6'
-const LAND = '#F8F4EA'
-const BORDER = '#CBC3B0'
+const SEA_TOP = '#FFFFFF'
+const SEA_BOTTOM = '#E7EAF4'
+const LAND = '#D5D9E8'
+const BORDER = '#FFFFFF'
 const INK = '#141833'
 const RAD = Math.PI / 180
 
@@ -188,36 +189,21 @@ function visibleShapes(layer: Layer, mode: MapMode, w: number, h: number, view: 
 
 // ---------- static decoration ----------
 
-const graticule = geoGraticule10()
-let flatDecor: { outline: Path2D; graticule: Path2D } | null = null
-function flatDecoration() {
-  if (!flatDecor) {
-    const outline = new Path2D()
-    geoPath(flatUnitSmooth, outline as unknown as CanvasRenderingContext2D)({ type: 'Sphere' })
-    const lines = new Path2D()
-    geoPath(flatUnitSmooth, lines as unknown as CanvasRenderingContext2D)(graticule)
-    flatDecor = { outline, graticule: lines }
-  }
-  return flatDecor
-}
+let flatOutline: Path2D | null = null
 
-/** The sea's outline and the graticule, as screen-space paths. */
-function decoration(mode: MapMode, w: number, h: number, view: View) {
+/** The edge of the map (the globe's disc or the flat map's outline) as a screen-space path. */
+function outlineOf(mode: MapMode, w: number, h: number, view: View) {
   const scale = baseScale(mode, w, h) * view.zoom
-  if (mode === 'flat') {
-    const [ux, uy] = flatUnit([view.lng, view.lat])!
-    const matrix = new DOMMatrix([scale, 0, 0, scale, w / 2 - ux * scale, h / 2 - uy * scale])
-    const outline = new Path2D()
-    outline.addPath(flatDecoration().outline, matrix)
-    const lines = new Path2D()
-    lines.addPath(flatDecoration().graticule, matrix)
-    return { outline, graticule: lines }
-  }
   const outline = new Path2D()
-  outline.arc(w / 2, h / 2, scale, 0, Math.PI * 2)
-  const lines = new Path2D()
-  geoPath(makeProjection(mode, w, h, view), lines as unknown as CanvasRenderingContext2D)(graticule)
-  return { outline, graticule: lines }
+  if (mode === 'flat') {
+    if (!flatOutline) {
+      flatOutline = new Path2D()
+      geoPath(flatUnitSmooth, flatOutline as unknown as CanvasRenderingContext2D)({ type: 'Sphere' })
+    }
+    const [ux, uy] = flatUnit([view.lng, view.lat])!
+    outline.addPath(flatOutline, new DOMMatrix([scale, 0, 0, scale, w / 2 - ux * scale, h / 2 - uy * scale]))
+  } else outline.arc(w / 2, h / 2, scale, 0, Math.PI * 2)
+  return outline
 }
 
 let hatch: CanvasPattern | null = null
@@ -238,77 +224,96 @@ function wishHatch(ctx: CanvasRenderingContext2D) {
   return hatch
 }
 
-/** Light from the upper left and a darker limb, so the globe reads as a sphere. */
+/** Soft light from the upper left and a slightly darker limb, so the plain globe reads as a sphere. */
 function shadeGlobe(ctx: CanvasRenderingContext2D, w: number, h: number, scale: number, region: Path2D) {
   const cx = w / 2
   const cy = h / 2
   const light = ctx.createRadialGradient(cx - scale * 0.32, cy - scale * 0.38, scale * 0.1, cx, cy, scale * 1.02)
-  light.addColorStop(0, 'rgba(255, 255, 255, 0.16)')
-  light.addColorStop(0.5, 'rgba(255, 255, 255, 0)')
-  light.addColorStop(0.84, 'rgba(12, 18, 70, 0.1)')
-  light.addColorStop(1, 'rgba(12, 18, 70, 0.36)')
+  light.addColorStop(0, 'rgba(255, 255, 255, 0.18)')
+  light.addColorStop(0.55, 'rgba(255, 255, 255, 0)')
+  light.addColorStop(0.86, 'rgba(60, 70, 120, 0.05)')
+  light.addColorStop(1, 'rgba(60, 70, 120, 0.2)')
   ctx.fillStyle = light
   ctx.fill(region, 'evenodd')
 }
 
-function fillShapes(ctx: CanvasRenderingContext2D, path: Path2D, status: Status | undefined) {
-  ctx.fillStyle = status ? STATUSES.find((s) => s.id === status)!.color : LAND
-  ctx.fill(path, 'evenodd')
-  if (status === 'wish') {
-    ctx.fillStyle = wishHatch(ctx) ?? LAND
+function fillShapes(ctx: CanvasRenderingContext2D, path: Path2D, status: Status | undefined, style: MapStyle) {
+  const photo = style !== 'plain'
+  if (status) {
+    // over a photo the marking is a tint, so the terrain and city lights stay visible
+    ctx.globalAlpha = photo ? 0.62 : 1
+    ctx.fillStyle = STATUSES.find((s) => s.id === status)!.color
+    ctx.fill(path, 'evenodd')
+    if (status === 'wish') {
+      ctx.fillStyle = wishHatch(ctx) ?? LAND
+      ctx.fill(path, 'evenodd')
+    }
+    ctx.globalAlpha = 1
+  } else if (!photo) {
+    ctx.fillStyle = LAND
     ctx.fill(path, 'evenodd')
   }
-  ctx.strokeStyle = status ? 'rgba(255, 255, 255, 0.85)' : BORDER
-  ctx.lineWidth = status ? 1 : 0.6
+  ctx.strokeStyle = status
+    ? 'rgba(255, 255, 255, 0.9)'
+    : style === 'night'
+      ? 'rgba(170, 195, 255, 0.28)'
+      : photo
+        ? 'rgba(255, 255, 255, 0.45)'
+        : BORDER
+  ctx.lineWidth = status ? 1 : photo ? 0.6 : 0.8
   ctx.lineJoin = 'round'
   ctx.stroke(path)
 }
 
 // ---------- painters ----------
 
-/** Everything that only changes with the view or the markings. */
+/**
+ * Everything that only changes with the view or the markings. With a photo
+ * style the sea and unmarked land are left transparent: the backdrop layer
+ * underneath shows through.
+ */
 export function paintMap(ctx: CanvasRenderingContext2D, w: number, h: number, scene: Scene) {
-  const { mode, view, layer, statuses } = scene
+  const { mode, style, view, layer, statuses } = scene
   const scale = baseScale(mode, w, h) * view.zoom
   const span = mode === 'globe' ? scale : scale * 1.4
-  const decor = decoration(mode, w, h, view)
+  const outline = outlineOf(mode, w, h, view)
 
   ctx.clearRect(0, 0, w, h)
 
   if (mode === 'globe') {
-    // ground shadow as a gradient: canvas shadowBlur is far too slow to run every frame
+    // soft halo as a gradient: canvas shadowBlur is far too slow to run every frame
     const cx = w / 2
-    const cy = h / 2 + scale * 0.05
-    const glow = ctx.createRadialGradient(cx, cy, scale * 0.92, cx, cy, scale * 1.14)
-    glow.addColorStop(0, 'rgba(35, 55, 198, 0.34)')
-    glow.addColorStop(1, 'rgba(35, 55, 198, 0)')
+    const cy = h / 2 + (style === 'plain' ? scale * 0.04 : 0)
+    const tint = style === 'plain' ? '70, 80, 130' : style === 'night' ? '70, 130, 255' : '90, 150, 255'
+    const glow = ctx.createRadialGradient(cx, cy, scale * 0.94, cx, cy, scale * 1.13)
+    glow.addColorStop(0, `rgba(${tint}, ${style === 'plain' ? 0.22 : 0.4})`)
+    glow.addColorStop(1, `rgba(${tint}, 0)`)
     ctx.fillStyle = glow
     ctx.beginPath()
-    ctx.arc(cx, cy, scale * 1.14, 0, Math.PI * 2)
-    ctx.fill()
+    ctx.arc(cx, cy, scale * 1.13, 0, Math.PI * 2)
+    ctx.arc(w / 2, h / 2, scale, 0, Math.PI * 2, true)
+    ctx.fill('evenodd')
   }
 
-  const sea = ctx.createLinearGradient(0, h / 2 - span, 0, h / 2 + span)
-  sea.addColorStop(0, SEA_TOP)
-  sea.addColorStop(1, SEA_BOTTOM)
-  ctx.fillStyle = sea
-  ctx.fill(decor.outline)
-
-  ctx.strokeStyle = 'rgba(255,255,255,0.13)'
-  ctx.lineWidth = 1
-  ctx.stroke(decor.graticule)
+  if (style === 'plain') {
+    const sea = ctx.createLinearGradient(0, h / 2 - span, 0, h / 2 + span)
+    sea.addColorStop(0, SEA_TOP)
+    sea.addColorStop(1, SEA_BOTTOM)
+    ctx.fillStyle = sea
+    ctx.fill(outline)
+  }
 
   if (layer) {
     const trace = makeTracer(mode, w, h, view)
     const groups: Record<Status | 'none', Shape[]> = { none: [], visited: [], lived: [], transit: [], wish: [] }
     for (const s of visibleShapes(layer, mode, w, h, view)) groups[(s.a2 && statuses[s.a2]) || 'none'].push(s)
     for (const id of ['none', 'visited', 'lived', 'transit', 'wish'] as const) {
-      if (groups[id].length) fillShapes(ctx, trace(groups[id]), id === 'none' ? undefined : id)
+      if (groups[id].length) fillShapes(ctx, trace(groups[id]), id === 'none' ? undefined : id, style)
     }
   }
 
-  if (mode === 'globe') shadeGlobe(ctx, w, h, scale, decor.outline)
-  paintMarkers(ctx, w, h, scene, decor.outline)
+  if (mode === 'globe' && style === 'plain') shadeGlobe(ctx, w, h, scale, outline)
+  paintMarkers(ctx, w, h, scene, outline)
 }
 
 /** Dots, "know people" rings and the rim: cheap, and always on top of the fills. */
@@ -351,33 +356,9 @@ function paintMarkers(ctx: CanvasRenderingContext2D, w: number, h: number, scene
   }
 
   // rim
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)'
-  ctx.lineWidth = 1.5
+  ctx.strokeStyle = scene.style === 'plain' ? 'rgba(150, 158, 190, 0.55)' : 'rgba(190, 215, 255, 0.35)'
+  ctx.lineWidth = 1
   ctx.stroke(outline)
-}
-
-/**
- * Repaints just the given countries on top of an already painted frame, so a
- * tap changes one country without redrawing the world.
- */
-export function patchCountries(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  scene: Scene,
-  countries: ReadonlySet<string>,
-) {
-  const { mode, view, layer, statuses } = scene
-  if (!layer) return
-  const scale = baseScale(mode, w, h) * view.zoom
-  const trace = makeTracer(mode, w, h, view)
-  for (const a2 of countries) {
-    const path = trace(layer.shapes.filter((s) => s.a2 === a2))
-    fillShapes(ctx, path, statuses[a2])
-    // the fresh fill covered the globe's shading; put it back inside this country only
-    if (mode === 'globe') shadeGlobe(ctx, w, h, scale, path)
-  }
-  paintMarkers(ctx, w, h, scene, decoration(mode, w, h, view).outline)
 }
 
 /** Hover highlight and click rings, drawn over a cached paintMap frame. */
@@ -387,9 +368,10 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, w: number, h: number
 
   if (hover && layer) {
     const path = makeTracer(mode, w, h, view)(layer.shapes.filter((s) => s.a2 === hover))
-    ctx.fillStyle = 'rgba(20, 24, 51, 0.16)'
+    const photo = scene.style !== 'plain'
+    ctx.fillStyle = photo ? 'rgba(255, 255, 255, 0.2)' : 'rgba(20, 24, 51, 0.14)'
     ctx.fill(path, 'evenodd')
-    ctx.strokeStyle = INK
+    ctx.strokeStyle = photo ? '#fff' : INK
     ctx.lineWidth = 1.4
     ctx.lineJoin = 'round'
     ctx.stroke(path)

@@ -1,14 +1,13 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
+import { createBackdrop, type Backdrop } from './backdrop'
 import { countryAt, levelFor, loadWorld, type World } from './geo'
 import { countryName, STRINGS, type Lang } from './i18n'
-import { BY_A2, flag, type MapMode, type Statuses } from './model'
+import { BY_A2, flag, type MapMode, type MapStyle, type Statuses } from './model'
 import {
-  DOT_BELOW_KM2,
   baseScale,
   makeProjection,
   paintMap,
   paintOverlay,
-  patchCountries,
   type Pulse,
   type View,
 } from './paint'
@@ -24,6 +23,7 @@ interface Props {
   statuses: Statuses
   people: ReadonlySet<string>
   mode: MapMode
+  style: MapStyle
   lang: Lang
   /** Applies the active marking; returns its colour, or null when the tap cleared it. */
   onPick(a2: string): string | null
@@ -37,9 +37,10 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 const wrapLng = (lng: number, mode: MapMode) => (mode === 'flat' ? clamp(lng, -180, 180) : lng)
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 
-const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, mode, lang, onPick }, ref) {
+const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, mode, style, lang, onPick }, ref) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const photoRef = useRef<HTMLCanvasElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
 
   // Everything the render loop reads lives in one mutable object so that
@@ -50,17 +51,19 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
     statuses,
     people,
     mode,
+    style,
     lang,
     onPick,
+    backdrop: null as Backdrop | null,
+    /** What the photo layer currently shows, so it is only redrawn when that changes. */
+    backdropKey: '',
     size: { w: 0, h: 0 },
     hover: null as string | null,
     /** Pointer position waiting for a hover lookup on the next frame. */
     probe: null as [number, number] | null,
     /** Bumped whenever the cached frame has to be repainted from scratch. */
     version: 0,
-    /** Countries whose fill changed and can be repainted on top of the cached frame. */
-    patch: new Set<string>(),
-    painted: { statuses, people, mode },
+    painted: mode,
     cache: null as HTMLCanvasElement | null,
     cacheKey: '',
     pulses: [] as (Pulse & { start: number })[],
@@ -75,26 +78,18 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
   state.statuses = statuses
   state.people = people
   state.mode = mode
+  state.style = style
   state.lang = lang
   state.onPick = onPick
 
   useEffect(() => {
     const before = state.painted
-    state.painted = { statuses, people, mode }
-    const changed = [...new Set([...Object.keys(before.statuses), ...Object.keys(statuses)])].filter(
-      (a2) => before.statuses[a2] !== statuses[a2],
-    )
-    // A tapped country is patched into the cached frame. Anything that may need
-    // pixels outside that country erased (rings, dots, a new projection) repaints.
-    const patchable =
-      before.people === people &&
-      before.mode === mode &&
-      changed.length <= 8 &&
-      changed.every((a2) => (BY_A2.get(a2)?.area ?? 0) >= DOT_BELOW_KM2)
-    if (patchable) for (const a2 of changed) state.patch.add(a2)
-    else state.version++
+    state.painted = mode
+    // Any change repaints the whole map. Painting one country over the old
+    // frame is cheaper but leaves traces of its previous outline behind.
+    state.version++
 
-    if (before.mode !== mode) {
+    if (before !== mode) {
       // a flat map reads best centred near the equator, the globe a little north of it
       if (mode === 'flat') {
         // bring a globe that has been spun round back onto the map's -180…180 range
@@ -103,15 +98,15 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       } else if (state.view.zoom < 1.3) state.view = { lng: state.view.lng, lat: START.lat, zoom: 1 }
       state.velocity = { lng: 0, lat: 0 }
       state.fly = null
-      const canvas = canvasRef.current
-      if (canvas && !reducedMotion()) {
-        canvas.classList.remove('swap')
-        void canvas.offsetWidth // restart the animation
-        canvas.classList.add('swap')
+      const layers = wrapRef.current?.querySelector('.globe-layers')
+      if (layers && !reducedMotion()) {
+        layers.classList.remove('swap')
+        void (layers as HTMLElement).offsetWidth // restart the animation
+        layers.classList.add('swap')
       }
     }
     state.request()
-  }, [statuses, people, mode, state])
+  }, [statuses, people, mode, style, state])
 
   useImperativeHandle(ref, () => ({
     flyTo(a2) {
@@ -131,13 +126,26 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
     snapshot(size) {
       const out = document.createElement('canvas')
       out.width = out.height = size
-      paintMap(out.getContext('2d')!, size, size, {
+      const ctx = out.getContext('2d')!
+      const photo = photoRef.current
+      if (state.backdrop && photo && state.style !== 'plain') {
+        const scale = baseScale(state.mode, size, size) * state.view.zoom
+        if (state.backdrop.draw(state.style, state.mode, size, size, scale, state.view)) ctx.drawImage(photo, 0, 0)
+        // the layer on screen was resized for this; have the next frame restore it
+        state.backdropKey = ''
+        state.request()
+      }
+      const scratch = document.createElement('canvas')
+      scratch.width = scratch.height = size
+      paintMap(scratch.getContext('2d')!, size, size, {
         mode: state.mode,
+        style: state.style,
         view: state.view,
         layer: state.world?.detail ?? null,
         statuses: state.statuses,
         people: state.people,
       })
+      ctx.drawImage(scratch, 0, 0)
       return out
     },
   }))
@@ -148,10 +156,15 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
     const tip = tipRef.current!
     const ctx = canvas.getContext('2d')!
     let disposed = false
+    state.backdrop = createBackdrop(photoRef.current!, () => {
+      state.backdropKey = ''
+      state.request()
+    })
 
     const draw = (now: number) => {
       state.frame = 0
       const { view, size } = state
+      if (size.w < 2 || size.h < 2) return
       let animating = false
 
       if (state.fly) {
@@ -182,20 +195,25 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
 
       const layer = state.world ? levelFor(state.world, view.zoom) : null
       const dpr = Math.min(devicePixelRatio || 1, 2)
-      const scene = { mode: state.mode, view, layer, statuses: state.statuses, people: state.people }
+      // without WebGL there is no photo layer, so the photo styles fall back to the plain one
+      const style = state.backdrop ? state.style : 'plain'
+      const scene = { mode: state.mode, style, view, layer, statuses: state.statuses, people: state.people }
 
       // A still map is painted once and kept as a bitmap, so hovering and
       // click rings only cost a blit plus the overlay.
-      const key = [state.mode, view.lng, view.lat, view.zoom, canvas.width, canvas.height, state.version].join('|')
+      const key = [state.mode, view.lng, view.lat, view.zoom, canvas.width, canvas.height, state.version, style].join('|')
+      const backdropKey = [state.mode, view.lng, view.lat, view.zoom, canvas.width, canvas.height, style].join('|')
+      if (state.backdrop && state.backdropKey !== backdropKey) {
+        const scale = baseScale(state.mode, size.w, size.h) * view.zoom * dpr
+        const ready = state.backdrop.draw(style, state.mode, canvas.width, canvas.height, scale, view)
+        state.backdropKey = ready ? backdropKey : ''
+      }
+
       if (!moving && layer && state.cache && state.cacheKey === key) {
         ctx.setTransform(1, 0, 0, 1, 0, 0)
         ctx.clearRect(0, 0, canvas.width, canvas.height)
         ctx.drawImage(state.cache, 0, 0)
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-        if (state.patch.size) {
-          patchCountries(ctx, size.w, size.h, scene, state.patch)
-          state.cache.getContext('2d')!.drawImage(canvas, 0, 0)
-        }
       } else {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         paintMap(ctx, size.w, size.h, scene)
@@ -203,11 +221,12 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
           const cache = (state.cache ??= document.createElement('canvas'))
           cache.width = canvas.width
           cache.height = canvas.height
-          cache.getContext('2d')!.drawImage(canvas, 0, 0)
+          const store = cache.getContext('2d')!
+          store.clearRect(0, 0, cache.width, cache.height)
+          store.drawImage(canvas, 0, 0)
           state.cacheKey = key
         }
       }
-      state.patch.clear()
       if (state.hover || state.pulses.length) {
         paintOverlay(ctx, size.w, size.h, scene, { hover: state.hover, pulses: state.pulses })
       }
@@ -419,7 +438,10 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
 
   return (
     <div className="globe" ref={wrapRef}>
-      <canvas ref={canvasRef} aria-label={STRINGS[lang].canvasLabel} role="img" />
+      <div className="globe-layers">
+        <canvas className="globe-photo" ref={photoRef} aria-hidden="true" />
+        <canvas ref={canvasRef} aria-label={STRINGS[lang].canvasLabel} role="img" />
+      </div>
       <div className="globe-tip" ref={tipRef} hidden />
     </div>
   )
