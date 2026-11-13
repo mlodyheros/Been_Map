@@ -1,7 +1,7 @@
 import { geoDistance, geoNaturalEarth1, geoOrthographic, geoPath } from 'd3-geo'
 import { PIN_COLOR, type Pin } from './extras'
 import type { Layer, Shape } from './geo'
-import { BY_A2, PEOPLE_COLOR, STATUSES, STATUS_BY_ID, isBeen, type MapMode, type MapStyle, type Status, type Statuses } from './model'
+import { BY_A2, PEOPLE_COLOR, STATUSES, STATUS_BY_ID, isBeen, isDark, type MapMode, type MapStyle, type Status, type Statuses } from './model'
 
 export interface View {
   /** Longitude / latitude at the centre of the map. */
@@ -278,9 +278,11 @@ function fillShapes(ctx: CanvasRenderingContext2D, path: Path2D, fill: Fill, sty
     ? 'rgba(255, 255, 255, 0.9)'
     : style === 'night'
       ? 'rgba(170, 195, 255, 0.28)'
-      : photo
+      : style === 'terrain'
         ? 'rgba(255, 255, 255, 0.45)'
-        : BORDER
+        : style === 'relief'
+          ? 'rgba(70, 60, 50, 0.38)'
+          : BORDER
   ctx.lineWidth = fill.color ? 1 : photo ? 0.6 : 0.8
   ctx.lineJoin = 'round'
   ctx.stroke(path)
@@ -325,10 +327,10 @@ export function paintMap(ctx: CanvasRenderingContext2D, w: number, h: number, sc
   if (mode === 'globe') {
     // soft halo as a gradient: canvas shadowBlur is far too slow to run every frame
     const cx = w / 2
-    const cy = h / 2 + (style === 'plain' ? scale * 0.04 : 0)
-    const tint = style === 'plain' ? '70, 80, 130' : style === 'night' ? '70, 130, 255' : '90, 150, 255'
+    const cy = h / 2 + (isDark(style) ? 0 : scale * 0.04)
+    const tint = !isDark(style) ? '70, 80, 130' : style === 'night' ? '70, 130, 255' : '90, 150, 255'
     const glow = ctx.createRadialGradient(cx, cy, scale * 0.94, cx, cy, scale * 1.13)
-    glow.addColorStop(0, `rgba(${tint}, ${style === 'plain' ? 0.22 : 0.4})`)
+    glow.addColorStop(0, `rgba(${tint}, ${isDark(style) ? 0.4 : 0.22})`)
     glow.addColorStop(1, `rgba(${tint}, 0)`)
     ctx.fillStyle = glow
     ctx.beginPath()
@@ -337,16 +339,23 @@ export function paintMap(ctx: CanvasRenderingContext2D, w: number, h: number, sc
     ctx.fill('evenodd')
   }
 
-  if (style === 'plain') {
+  if (style === 'plain' || style === 'relief') {
     const sea = ctx.createLinearGradient(0, h / 2 - span, 0, h / 2 + span)
-    sea.addColorStop(0, SEA_TOP)
-    sea.addColorStop(1, SEA_BOTTOM)
+    sea.addColorStop(0, style === 'relief' ? '#EEF5FC' : SEA_TOP)
+    sea.addColorStop(1, style === 'relief' ? '#D3E3F3' : SEA_BOTTOM)
     ctx.fillStyle = sea
     ctx.fill(outline)
   }
 
   if (layer) {
     const trace = makeTracer(mode, w, h, view)
+    if (style === 'relief') {
+      // the land is drawn by the layer underneath: cut it out of the sea, so the coast is as crisp as the borders
+      ctx.globalCompositeOperation = 'destination-out'
+      ctx.fillStyle = '#000'
+      ctx.fill(trace(visibleShapes(layer, mode, w, h, view)))
+      ctx.globalCompositeOperation = 'source-over'
+    }
     const regions = scene.compare ? null : scene.regionShapes
     // countries with marked regions are drawn pale, so the marked parts stand out
     const partial = new Set(regions ? Object.keys(scene.regions).map((id) => id.slice(0, 2)) : [])
@@ -366,7 +375,8 @@ export function paintMap(ctx: CanvasRenderingContext2D, w: number, h: number, sc
     if (regions) {
       const visible = visibleShapes({ shapes: regions as Shape[] }, mode, w, h, view) as (Shape & { id?: string })[]
       if (scene.regionBorders && visible.length) {
-        ctx.strokeStyle = style === 'plain' ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.3)'
+        ctx.strokeStyle =
+          style === 'plain' ? 'rgba(255, 255, 255, 0.95)' : style === 'relief' ? 'rgba(70, 60, 50, 0.3)' : 'rgba(255, 255, 255, 0.3)'
         ctx.lineWidth = 0.6
         ctx.lineJoin = 'round'
         ctx.stroke(trace(visible))
@@ -380,7 +390,7 @@ export function paintMap(ctx: CanvasRenderingContext2D, w: number, h: number, sc
     }
   }
 
-  if (mode === 'globe' && style === 'plain') shadeGlobe(ctx, w, h, scale, outline)
+  if (mode === 'globe' && !isDark(style)) shadeGlobe(ctx, w, h, scale, outline)
   paintMarkers(ctx, w, h, scene, outline)
 }
 
@@ -440,10 +450,12 @@ function paintMarkers(ctx: CanvasRenderingContext2D, w: number, h: number, scene
     ctx.stroke()
   }
 
-  // rim
-  ctx.strokeStyle = scene.style === 'plain' ? 'rgba(150, 158, 190, 0.55)' : 'rgba(190, 215, 255, 0.35)'
-  ctx.lineWidth = 1
-  ctx.stroke(outline)
+  // rim; left out where mountains stand out past the edge of the globe
+  if (scene.style !== 'relief' || mode === 'flat') {
+    ctx.strokeStyle = isDark(scene.style) ? 'rgba(190, 215, 255, 0.35)' : 'rgba(150, 158, 190, 0.55)'
+    ctx.lineWidth = 1
+    ctx.stroke(outline)
+  }
 }
 
 /** Hover highlight and click rings, drawn over a cached paintMap frame. */
@@ -453,10 +465,10 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, w: number, h: number
 
   if (hover.length) {
     const path = makeTracer(mode, w, h, view)(hover)
-    const photo = scene.style !== 'plain'
-    ctx.fillStyle = photo ? 'rgba(255, 255, 255, 0.2)' : 'rgba(20, 24, 51, 0.14)'
+    const dark = isDark(scene.style)
+    ctx.fillStyle = dark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(20, 24, 51, 0.14)'
     ctx.fill(path, 'evenodd')
-    ctx.strokeStyle = photo ? '#fff' : INK
+    ctx.strokeStyle = dark ? '#fff' : INK
     ctx.lineWidth = 1.4
     ctx.lineJoin = 'round'
     ctx.stroke(path)

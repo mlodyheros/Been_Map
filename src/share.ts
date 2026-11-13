@@ -1,5 +1,5 @@
 import { STRINGS, type Lang } from './i18n'
-import { PEOPLE_COLOR, STATUSES, landShareLabel, type MapStyle, type Stats } from './model'
+import { PEOPLE_COLOR, STATUSES, isDark, landShareLabel, type MapStyle, type Stats } from './model'
 
 /** Story fills a phone screen (Instagram, WhatsApp status…); post is the 4:5 feed format. */
 export type ShareFormat = 'story' | 'post'
@@ -18,7 +18,7 @@ export async function renderCard(
   format: ShareFormat,
 ): Promise<Blob | null> {
   const t = STRINGS[lang]
-  const dark = style !== 'plain'
+  const dark = isDark(style)
   const ink = dark ? '#FFFFFF' : '#141833'
   await document.fonts.ready
   const [width, height] = SIZES[format]

@@ -52,7 +52,7 @@ interface Props {
 }
 
 const MIN_ZOOM = 0.8
-const MAX_ZOOM = 10
+const MAX_ZOOM = 24
 const START: View = { lng: 15, lat: 38, zoom: 1 }
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 /** The globe spins freely; the flat map stops at its edges. */
@@ -180,7 +180,8 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
     flyTo(a2) {
       const c = BY_A2.get(a2)
       if (!c) return
-      const zoom = c.area < 30_000 ? 4.5 : c.area < 400_000 ? 2.8 : c.area < 2_500_000 ? 1.9 : 1.3
+      // close enough for the country to fill a good part of the map
+      const zoom = c.area < 5_000 ? 12 : c.area < 30_000 ? 7 : c.area < 150_000 ? 5 : c.area < 400_000 ? 3.8 : c.area < 2_500_000 ? 2.5 : 1.6
       const to = { lng: c.lng, lat: clamp(c.lat, -80, 80), zoom }
       state.velocity = { lng: 0, lat: 0 }
       if (reducedMotion()) state.view = to
