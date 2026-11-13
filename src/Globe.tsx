@@ -1,6 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { createBackdrop, type Backdrop } from './backdrop'
-import { countryAt, levelFor, loadWorld, type World } from './geo'
+import { createDetailLoader } from './detail'
+import type { Pin } from './extras'
+import { countryAt, levelFor, loadWorld, type Shape, type World } from './geo'
+import { loadRegions, regionAt, regionName, type Regions } from './regions'
 import { countryName, STRINGS, type Lang } from './i18n'
 import { BY_A2, flag, type MapMode, type MapStyle, type Statuses } from './model'
 import {
@@ -9,11 +12,24 @@ import {
   paintMap,
   paintOverlay,
   type Pulse,
+  type Scene,
   type View,
 } from './paint'
 
+/** What a tap on the map landed on. */
+export interface Hit {
+  a2: string | null
+  /** Set only while regions are being marked. */
+  region: string | null
+  /** Id of the place marker under the pointer, if any. */
+  pin: string | null
+  lng: number
+  lat: number
+}
+
 export interface GlobeHandle {
   flyTo(a2: string): void
+  flyToPoint(lng: number, lat: number, zoom: number): void
   zoomBy(factor: number): void
   /** Renders the map as it currently looks onto a fresh square canvas. */
   snapshot(size: number): HTMLCanvasElement
@@ -22,11 +38,17 @@ export interface GlobeHandle {
 interface Props {
   statuses: Statuses
   people: ReadonlySet<string>
+  pins: readonly Pin[]
+  regions: Statuses
+  /** Taps mark states and provinces where a country has them. */
+  regionLevel: boolean
+  /** Your own markings while someone else's map is compared with them. */
+  compare: Statuses | null
   mode: MapMode
   style: MapStyle
   lang: Lang
-  /** Applies the active marking; returns its colour, or null when the tap cleared it. */
-  onPick(a2: string): string | null
+  /** Applies the active marking; returns its colour, or null when nothing was added. */
+  onPick(hit: Hit): string | null
 }
 
 const MIN_ZOOM = 0.8
@@ -37,7 +59,10 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 const wrapLng = (lng: number, mode: MapMode) => (mode === 'flat' ? clamp(lng, -180, 180) : lng)
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 
-const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, mode, style, lang, onPick }, ref) {
+const Globe = forwardRef<GlobeHandle, Props>(function Globe(
+  { statuses, people, pins, regions, regionLevel, compare, mode, style, lang, onPick },
+  ref,
+) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const photoRef = useRef<HTMLCanvasElement>(null)
@@ -50,6 +75,11 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
     world: null as World | null,
     statuses,
     people,
+    pins,
+    regions,
+    regionLevel,
+    compare,
+    regionData: null as Regions | null,
     mode,
     style,
     lang,
@@ -59,6 +89,7 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
     backdropKey: '',
     size: { w: 0, h: 0 },
     hover: null as string | null,
+    hoverRegion: null as string | null,
     /** Pointer position waiting for a hover lookup on the next frame. */
     probe: null as [number, number] | null,
     /** Bumped whenever the cached frame has to be repainted from scratch. */
@@ -77,6 +108,10 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
 
   state.statuses = statuses
   state.people = people
+  state.pins = pins
+  state.regions = regions
+  state.regionLevel = regionLevel
+  state.compare = compare
   state.mode = mode
   state.style = style
   state.lang = lang
@@ -106,7 +141,40 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       }
     }
     state.request()
-  }, [statuses, people, mode, style, state])
+  }, [statuses, people, pins, regions, regionLevel, compare, mode, style, state])
+
+  // region shapes are fetched the first time they are needed
+  const wantRegions = regionLevel || Object.keys(regions).length > 0
+  useEffect(() => {
+    if (!wantRegions || state.regionData) return
+    let current = true
+    loadRegions().then(
+      (data) => {
+        if (!current) return
+        state.regionData = data
+        state.version++
+        state.request()
+      },
+      () => {},
+    )
+    return () => {
+      current = false
+    }
+  }, [wantRegions, state])
+
+  const sceneOf = (shown: MapStyle, layer: Scene['layer']): Scene => ({
+    mode: state.mode,
+    style: shown,
+    view: state.view,
+    layer,
+    statuses: state.statuses,
+    people: state.people,
+    pins: state.pins,
+    regions: state.regions,
+    regionShapes: state.regionData?.shapes ?? null,
+    regionBorders: state.regionLevel,
+    compare: state.compare,
+  })
 
   useImperativeHandle(ref, () => ({
     flyTo(a2) {
@@ -114,6 +182,13 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       if (!c) return
       const zoom = c.area < 30_000 ? 4.5 : c.area < 400_000 ? 2.8 : c.area < 2_500_000 ? 1.9 : 1.3
       const to = { lng: c.lng, lat: clamp(c.lat, -80, 80), zoom }
+      state.velocity = { lng: 0, lat: 0 }
+      if (reducedMotion()) state.view = to
+      else state.fly = { from: { ...state.view }, to, start: performance.now(), ms: 900 }
+      state.request()
+    },
+    flyToPoint(lng, lat, zoom) {
+      const to = { lng, lat: clamp(lat, -80, 80), zoom: Math.max(zoom, state.view.zoom) }
       state.velocity = { lng: 0, lat: 0 }
       if (reducedMotion()) state.view = to
       else state.fly = { from: { ...state.view }, to, start: performance.now(), ms: 900 }
@@ -137,14 +212,7 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       }
       const scratch = document.createElement('canvas')
       scratch.width = scratch.height = size
-      paintMap(scratch.getContext('2d')!, size, size, {
-        mode: state.mode,
-        style: state.style,
-        view: state.view,
-        layer: state.world?.detail ?? null,
-        statuses: state.statuses,
-        people: state.people,
-      })
+      paintMap(scratch.getContext('2d')!, size, size, sceneOf(state.style, state.world?.detail ?? null))
       ctx.drawImage(scratch, 0, 0)
       return out
     },
@@ -157,6 +225,12 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
     const ctx = canvas.getContext('2d')!
     let disposed = false
     state.backdrop = createBackdrop(photoRef.current!, () => {
+      state.backdropKey = ''
+      state.request()
+    })
+    const sharpen = createDetailLoader((detail) => {
+      if (disposed) return
+      state.backdrop?.setDetail(detail)
       state.backdropKey = ''
       state.request()
     })
@@ -197,7 +271,7 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       const dpr = Math.min(devicePixelRatio || 1, 2)
       // without WebGL there is no photo layer, so the photo styles fall back to the plain one
       const style = state.backdrop ? state.style : 'plain'
-      const scene = { mode: state.mode, style, view, layer, statuses: state.statuses, people: state.people }
+      const scene = sceneOf(style, layer)
 
       // A still map is painted once and kept as a bitmap, so hovering and
       // click rings only cost a blit plus the overlay.
@@ -207,6 +281,11 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
         const scale = baseScale(state.mode, size.w, size.h) * view.zoom * dpr
         const ready = state.backdrop.draw(style, state.mode, canvas.width, canvas.height, scale, view)
         state.backdropKey = ready ? backdropKey : ''
+      }
+
+      // once the view rests, fetch sharper imagery for what is on screen
+      if (!moving && state.backdrop) {
+        sharpen.want(style, state.mode, view, size.w, size.h, baseScale(state.mode, size.w, size.h) * view.zoom, dpr)
       }
 
       if (!moving && layer && state.cache && state.cacheKey === key) {
@@ -227,9 +306,9 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
           state.cacheKey = key
         }
       }
-      if (state.hover || state.pulses.length) {
-        paintOverlay(ctx, size.w, size.h, scene, { hover: state.hover, pulses: state.pulses })
-      }
+      const region = state.hoverRegion && state.regionData?.byId.get(state.hoverRegion)
+      const hover: Shape[] = region ? [region] : state.hover && layer ? layer.shapes.filter((s) => s.a2 === state.hover) : []
+      if (hover.length || state.pulses.length) paintOverlay(ctx, size.w, size.h, scene, { hover, pulses: state.pulses })
 
       if (animating || state.pulses.length) state.request()
       else if (moving) {
@@ -274,35 +353,64 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       return [e.clientX - box.left, e.clientY - box.top] as [number, number]
     }
 
-    const pick = (x: number, y: number) => {
+    const pick = (x: number, y: number): Hit | null => {
       const { world, size, view } = state
       if (!world) return null
       const projection = makeProjection(state.mode, size.w, size.h, view)
       const at = projection.invert?.([x, y])
       // points outside the map outline don't survive a round trip
       const back = at && projection(at)
-      if (!at || !back || Math.hypot(back[0] - x, back[1] - y) > 1) return null
-      return { a2: countryAt(world.detail, at[0], at[1], state.hover), at }
+      if (!at || !back || !(Math.hypot(back[0] - x, back[1] - y) <= 1)) return null
+
+      let pin: string | null = null
+      let nearest = 12 // pixels: a marker is easier to hit than it is to see
+      for (const p of state.pins) {
+        const on = projection([p.lng, p.lat])
+        const d = on ? Math.hypot(on[0] - x, on[1] - y) : Infinity
+        if (d < nearest) {
+          nearest = d
+          pin = p.id
+        }
+      }
+      const a2 = countryAt(world.detail, at[0], at[1], state.hover)
+      const region =
+        state.regionLevel && !state.compare && state.regionData
+          ? (regionAt(state.regionData, at[0], at[1])?.id ?? null)
+          : null
+      return { a2, region, pin, lng: at[0], lat: at[1] }
     }
 
-    const showTip = (a2: string | null, x: number, y: number) => {
-      const c = a2 ? BY_A2.get(a2) : null
-      if (!c) {
+    const showTip = (text: string | null, x: number, y: number) => {
+      if (!text) {
         tip.hidden = true
         return
       }
       tip.hidden = false
-      tip.textContent = `${flag(c.a2)} ${countryName(c, state.lang)}`
+      tip.textContent = text
       tip.style.transform = `translate(${x + 14}px, ${y + 14}px)`
     }
 
     // runs at most once per frame, however many mouse events arrived
     const probeHover = () => {
       const [x, y] = state.probe!
-      const hit = pick(x, y)?.a2 ?? null
-      showTip(hit, x, y)
-      canvas.style.cursor = hit ? 'pointer' : 'grab'
-      state.hover = hit
+      const hit = pick(x, y)
+      const pin = hit?.pin ? state.pins.find((p) => p.id === hit.pin) : null
+      const region = hit?.region ? state.regionData?.byId.get(hit.region) : null
+      const country = hit?.a2 ? BY_A2.get(hit.a2) : null
+      showTip(
+        pin
+          ? `📍 ${pin.name}`
+          : region
+            ? `${flag(region.a2)} ${regionName(region, state.lang)}`
+            : country
+              ? `${flag(country.a2)} ${countryName(country, state.lang)}`
+              : null,
+        x,
+        y,
+      )
+      canvas.style.cursor = pin || region || country ? 'pointer' : 'grab'
+      state.hover = pin || region ? null : (hit?.a2 ?? null)
+      state.hoverRegion = pin ? null : (region?.id ?? null)
     }
 
     const pointers = new Map<number, { x: number; y: number }>()
@@ -366,7 +474,8 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
           // capped so one large jump between events can't spin the globe wildly
           state.velocity = { lng: clamp(-dx * k, -4, 4), lat: clamp(dy * k, -4, 4) }
           lastMove = performance.now()
-          if (state.hover) state.hover = null
+          state.hover = null
+          state.hoverRegion = null
           tip.hidden = true
           canvas.style.cursor = 'grabbing'
         }
@@ -383,11 +492,9 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
       if (!dragging && e.type === 'pointerup') {
         const [x, y] = local(e)
         const hit = pick(x, y)
-        if (hit?.a2) {
-          const color = state.onPick(hit.a2)
-          if (color && !reducedMotion()) {
-            state.pulses.push({ lng: hit.at[0], lat: hit.at[1], color, t: 0, start: performance.now() })
-          }
+        const color = hit && state.onPick(hit)
+        if (hit && color && !reducedMotion()) {
+          state.pulses.push({ lng: hit.lng, lat: hit.lat, color, t: 0, start: performance.now() })
         }
       }
 
@@ -408,8 +515,9 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe({ statuses, people, 
     const leave = () => {
       tip.hidden = true
       state.probe = null
-      if (state.hover) {
+      if (state.hover || state.hoverRegion) {
         state.hover = null
+        state.hoverRegion = null
         state.request()
       }
     }

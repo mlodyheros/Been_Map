@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { cleanExtras, type Extras } from './extras'
 import { cleanPeople, cleanStatuses, type Statuses } from './model'
 
 // The publishable key is meant to ship in the browser; row-level security in
@@ -16,6 +17,8 @@ export interface Account {
 export interface CloudMap {
   statuses: Statuses
   people: Set<string>
+  /** Places, regions and notes. Personal maps only; shared maps have none. */
+  extras?: Extras
 }
 
 export interface Friend {
@@ -56,7 +59,7 @@ function fail(error: { message: string; code?: string }): never {
   if (text.includes('password should be')) throw new CloudError('passwordShort')
   if (error.code === '23505') throw new CloudError('exists')
   // tables or the sign-up trigger are missing: schema.sql has not been run yet
-  const missing = ['PGRST202', 'PGRST205', '42P01', '42883']
+  const missing = ['PGRST202', 'PGRST204', 'PGRST205', '42P01', '42703', '42883']
   if (missing.includes(error.code ?? '') || text.includes('database error')) {
     throw new CloudError('setup', error.message)
   }
@@ -89,23 +92,96 @@ export async function signIn(email: string, password: string) {
   if (error) fail(error)
 }
 
+export type Provider = 'google' | 'apple'
+
+/** Sign-in services switched on in the Supabase project, so only working buttons are shown. */
+export async function oauthProviders(): Promise<Provider[]> {
+  try {
+    const settings = await fetch(`${SUPABASE_URL}/auth/v1/settings`, { headers: { apikey: SUPABASE_KEY } }).then((r) =>
+      r.json(),
+    )
+    return (['google', 'apple'] as const).filter((p) => settings?.external?.[p] === true)
+  } catch {
+    return []
+  }
+}
+
+/** Leaves the page for the provider's sign-in and comes back signed in. */
+export async function signInWith(provider: Provider) {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: { redirectTo: location.origin + location.pathname },
+  })
+  if (error) fail(error)
+}
+
+/** Accounts made through Google or Apple pick their username after the first sign-in. */
+export async function claimUsername(username: string) {
+  const name = username.trim().toLowerCase()
+  if (!USERNAME_PATTERN.test(name)) throw new CloudError('usernameInvalid')
+  const { error } = await supabase.rpc('claim_username', { name })
+  if (error?.code === '23505') throw new CloudError('usernameTaken')
+  if (error) fail(error)
+  // the session carries the username from here on
+  const saved = await supabase.auth.updateUser({ data: { username: name } })
+  if (saved.error) fail(saved.error)
+}
+
 export async function signOut() {
   await supabase.auth.signOut()
 }
 
 export async function fetchMap(userId: string): Promise<CloudMap | null> {
-  const { data, error } = await supabase.from('maps').select('statuses, people').eq('user_id', userId).maybeSingle()
+  const { data, error } = await supabase.from('maps').select('*').eq('user_id', userId).maybeSingle()
   if (error) fail(error)
-  return data ? { statuses: cleanStatuses(data.statuses), people: cleanPeople(data.people) } : null
+  return data
+    ? { statuses: cleanStatuses(data.statuses), people: cleanPeople(data.people), extras: cleanExtras(data.extras) }
+    : null
 }
 
+/** False once the database turned out to predate places, regions and notes (schema.sql not re-run yet). */
+let extrasStored = true
+
 export async function saveMap(userId: string, map: CloudMap) {
-  const { error } = await supabase.from('maps').upsert({
+  const row = {
     user_id: userId,
     statuses: map.statuses,
     people: [...map.people],
     updated_at: new Date().toISOString(),
-  })
+  }
+  if (extrasStored && map.extras) {
+    const { error } = await supabase.from('maps').upsert({ ...row, extras: map.extras })
+    if (!error) return
+    // an older database has no such column: keep syncing the countries at least
+    if (error.code !== 'PGRST204' && !error.message.includes('extras')) fail(error)
+    extrasStored = false
+  }
+  const { error } = await supabase.from('maps').upsert(row)
+  if (error) fail(error)
+}
+
+/** Someone's map by username, if they switched their public link on. Works signed out. */
+export async function fetchPublicMap(username: string): Promise<(CloudMap & { username: string }) | null> {
+  const { data, error } = await supabase.rpc('public_map', { name: username })
+  if (error) fail(error)
+  return data
+    ? {
+        username: String(data.username),
+        statuses: cleanStatuses(data.statuses),
+        people: cleanPeople(data.people),
+        extras: cleanExtras(data.extras),
+      }
+    : null
+}
+
+export async function isPublic(userId: string) {
+  const { data, error } = await supabase.from('profiles').select('is_public').eq('id', userId).maybeSingle()
+  if (error) fail(error)
+  return Boolean(data?.is_public)
+}
+
+export async function setPublic(userId: string, on: boolean) {
+  const { error } = await supabase.from('profiles').update({ is_public: on }).eq('id', userId)
   if (error) fail(error)
 }
 

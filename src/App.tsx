@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Account from './Account'
+import { unlocked, ACHIEVEMENTS } from './achievements'
+import CountryDetails from './CountryDetails'
 import {
   fetchMap,
+  fetchPublicMap,
   fetchSharedMap,
   flagShared,
   markShared,
@@ -13,7 +16,20 @@ import {
   type Friend,
   type SharedMapInfo,
 } from './cloud'
-import Globe, { type GlobeHandle } from './Globe'
+import {
+  EMPTY_EXTRAS,
+  MAX_PINS,
+  PIN_COLOR,
+  hasExtras,
+  loadExtras,
+  mergeExtras,
+  saveExtras,
+  type Extras,
+  type Note,
+  type Pin,
+} from './extras'
+import Globe, { type GlobeHandle, type Hit } from './Globe'
+import { Achievements, Places, Timeline } from './Insights'
 import { LANGS, STRINGS, countryName, type Brush } from './i18n'
 import {
   BY_A2,
@@ -38,15 +54,20 @@ import {
   saveStatuses,
   type MapMode,
   type MapStyle,
+  type Status,
   type Statuses,
 } from './model'
-import { downloadPoster } from './share'
+import { COMPARE } from './paint'
+import { cityId, loadCities, nearestCity, searchCities, type City } from './places'
+import { REGION_COUNTRIES, regionName, regionsNow } from './regions'
+import Share from './ShareDialog'
+import { renderCard, type ShareFormat } from './share'
 
-type Filter = 'all' | 'marked' | 'wish'
-const FILTERS: Filter[] = ['all', 'marked', 'wish']
+type Filter = 'all' | Brush
 
 const BRUSHES: { id: Brush; color: string }[] = [...STATUSES, { id: 'people', color: PEOPLE_COLOR }]
 const BRUSH_COLOR = Object.fromEntries(BRUSHES.map((b) => [b.id, b.color])) as Record<Brush, string>
+const FILTERS: Filter[] = ['all', ...BRUSHES.map((b) => b.id)]
 const MODES: MapMode[] = ['globe', 'flat']
 type Page = 'map' | 'hub'
 const PAGES: Page[] = ['map', 'hub']
@@ -100,7 +121,11 @@ function useSheet() {
 
   const grip = {
     onPointerDown(e: React.PointerEvent) {
-      e.currentTarget.setPointerCapture(e.pointerId)
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId)
+      } catch {
+        // pointer already gone; the drag still works while it stays over the grip
+      }
       drag.current = { y0: e.clientY, from: offset, at: offset, moved: false }
     },
     onPointerMove(e: React.PointerEvent) {
@@ -181,6 +206,17 @@ export default function App() {
   const [filter, setFilter] = useState<Filter>('all')
   const [account, setAccount] = useState<AccountInfo | null>(null)
   const [page, setPage] = useState<Page>('map')
+  const [sharing, setSharing] = useState(false)
+  const [extras, setExtras] = useState(loadExtras)
+  /** Taps on the map drop place markers instead of marking countries. */
+  const [pinMode, setPinMode] = useState(false)
+  /** Taps mark states and provinces in the countries that have them. */
+  const [regionLevel, setRegionLevel] = useState(false)
+  /** The country whose details are open in the list. */
+  const [open, setOpen] = useState<string | null>(null)
+  /** While a friend's map is shown: colour it by who has been where. */
+  const [compare, setCompare] = useState(true)
+  const [cities, setCities] = useState<City[] | null>(null)
   const [syncFailed, setSyncFailed] = useState(false)
   /** A map shown in place of your own: a friend's (read-only) or a shared one (everyone marks it). */
   const [viewing, setViewing] = useState<Viewing | null>(null)
@@ -192,13 +228,30 @@ export default function App() {
   const t = STRINGS[lang]
 
   // The map's click handler needs the latest values without re-subscribing.
-  const live = useRef({ statuses, people, brush, viewing, lang })
-  live.current = { statuses, people, brush, viewing, lang }
+  const live = useRef({ statuses, people, extras, brush, pinMode, viewing, lang, cities })
+  live.current = { statuses, people, extras, brush, pinMode, viewing, lang, cities }
   /** True once the signed-in account's map has been loaded, so local edits may be uploaded. */
   const cloudReady = useRef(false)
+  /** Set when the map was just replaced wholesale (sign-in), so that is not announced as new achievements. */
+  const quiet = useRef(false)
 
   useEffect(() => saveStatuses(statuses), [statuses])
   useEffect(() => savePeople(people), [people])
+  useEffect(() => saveExtras(extras), [extras])
+
+  // the city list is only fetched once someone searches or starts dropping pins
+  const wantCities = pinMode || query.trim().length >= 2
+  useEffect(() => {
+    if (!wantCities || cities) return
+    let current = true
+    loadCities().then(
+      (list) => current && setCities(list),
+      () => {},
+    )
+    return () => {
+      current = false
+    }
+  }, [wantCities, cities])
   useEffect(() => {
     saveSettings(settings)
     document.documentElement.lang = settings.lang
@@ -210,7 +263,7 @@ export default function App() {
       const user = session?.user
       setAccount((current) =>
         user
-          ? current?.id === user.id
+          ? current?.id === user.id && current.username === String(user.user_metadata.username ?? '')
             ? current
             : { id: user.id, username: String(user.user_metadata.username ?? '') }
           : null,
@@ -221,6 +274,7 @@ export default function App() {
         saveOwner(null)
         setStatuses({})
         setPeople(new Set())
+        setExtras(EMPTY_EXTRAS)
         setViewing(null)
         setSyncFailed(false)
       }
@@ -228,7 +282,8 @@ export default function App() {
     return () => data.subscription.unsubscribe()
   }, [])
 
-  const accountId = account?.id
+  // an account that came through Google or Apple has nothing to sync until it has picked a username
+  const accountId = account?.username ? account.id : undefined
   useEffect(() => {
     if (!accountId) return
     let cancelled = false
@@ -238,8 +293,8 @@ export default function App() {
         const remote = await fetchMap(accountId)
         if (cancelled) return
         const owner = loadOwner()
-        const local: CloudMap = { statuses: live.current.statuses, people: live.current.people }
-        const empty: CloudMap = { statuses: {}, people: new Set() }
+        const local = { statuses: live.current.statuses, people: live.current.people, extras: live.current.extras }
+        const empty = { statuses: {}, people: new Set<string>(), extras: EMPTY_EXTRAS }
         let next: CloudMap
         if (owner === accountId) next = remote ?? local // local copy is just this account's cache
         else if (owner) next = remote ?? empty // cache left over from another account
@@ -249,16 +304,22 @@ export default function App() {
           next = {
             statuses: { ...local.statuses, ...remote.statuses },
             people: new Set([...local.people, ...remote.people]),
+            extras: mergeExtras(local.extras, remote.extras ?? EMPTY_EXTRAS),
           }
         }
+        // a database that predates places and notes returns none: keep what this device has
+        const nextExtras = next.extras && (hasExtras(next.extras) || next !== remote) ? next.extras : local.extras
         live.current.statuses = next.statuses
         live.current.people = next.people
+        live.current.extras = nextExtras
         setStatuses(next.statuses)
         setPeople(next.people)
+        setExtras(nextExtras)
+        quiet.current = true
         saveOwner(accountId)
         cloudReady.current = true
         // the account doesn't hold this exact map yet: store it now rather than on the next edit
-        if (next !== remote) await saveMap(accountId, next)
+        if (next !== remote || nextExtras !== remote.extras) await saveMap(accountId, { ...next, extras: nextExtras })
         setSyncFailed(false)
       } catch {
         if (!cancelled) setSyncFailed(true)
@@ -272,17 +333,24 @@ export default function App() {
   useEffect(() => {
     if (!accountId || !cloudReady.current) return
     const timer = setTimeout(() => {
-      saveMap(accountId, { statuses, people }).then(
+      saveMap(accountId, { statuses, people, extras }).then(
         () => setSyncFailed(false),
         () => setSyncFailed(true),
       )
     }, 700)
     return () => clearTimeout(timer)
-  }, [accountId, statuses, people])
+  }, [accountId, statuses, people, extras])
 
   const viewFriend = useCallback(async (friend: Friend) => {
     const map = await fetchMap(friend.userId)
-    setViewing({ kind: 'friend', username: friend.username, statuses: map?.statuses ?? {}, people: map?.people ?? new Set() })
+    setViewing({
+      kind: 'friend',
+      username: friend.username,
+      statuses: map?.statuses ?? {},
+      people: map?.people ?? new Set(),
+      // a friend's notes are theirs to read
+      extras: { ...(map?.extras ?? EMPTY_EXTRAS), notes: {} },
+    })
     setPage('map')
   }, [])
   const openShared = useCallback(async (info: SharedMapInfo) => {
@@ -320,9 +388,33 @@ export default function App() {
     }
   }, [sharedId])
 
+  // ?u=name opens that person's public map, read-only
+  useEffect(() => {
+    const name = new URLSearchParams(location.search).get('u')
+    if (!name) return
+    let current = true
+    fetchPublicMap(name).then(
+      (map) => {
+        if (!current) return
+        if (map) setViewing({ kind: 'friend', ...map })
+        else setToast({ id: Date.now(), text: STRINGS[live.current.lang].account.notPublic, color: null })
+      },
+      () => current && setToast({ id: Date.now(), text: STRINGS[live.current.lang].account.notPublic, color: null }),
+    )
+    return () => {
+      current = false
+    }
+  }, [])
+
+  const stopViewing = () => {
+    setViewing(null)
+    // leaving a public map also drops it from the address, so a reload shows your own
+    if (location.search) history.replaceState(null, '', location.pathname)
+  }
+
   useEffect(() => {
     if (!toast) return
-    const timer = setTimeout(() => setToast(null), 1800)
+    const timer = setTimeout(() => setToast(null), 2200)
     return () => clearTimeout(timer)
   }, [toast])
 
@@ -379,6 +471,107 @@ export default function App() {
     return color
   }, [])
 
+  const commitExtras = useCallback((next: Extras) => {
+    live.current.extras = next
+    setExtras(next)
+  }, [])
+
+  /** Marks a state or province with the active status; a second tap clears it. */
+  const toggleRegion = useCallback(
+    (id: string) => {
+      const { extras: mine, statuses: own, brush: active, viewing: view, lang: language } = live.current
+      if (view) return null
+      const words = STRINGS[language]
+      const status: Status = active === 'people' ? 'visited' : active
+      const added = mine.regions[id] !== status
+      const regions = { ...mine.regions }
+      if (added) regions[id] = status
+      else delete regions[id]
+      commitExtras({ ...mine, regions })
+      // being in a state means being in the country
+      const a2 = id.slice(0, 2)
+      if (added && !own[a2]) {
+        const marks = { ...own, [a2]: status }
+        live.current.statuses = marks
+        setStatuses(marks)
+      }
+      const region = regionsNow()?.byId.get(id)
+      const label = `${flag(a2)} ${region ? regionName(region, language) : id}`
+      const color = added ? STATUS_BY_ID[status].color : null
+      setToast({
+        id: Date.now(),
+        text: added ? words.account.marked(label, words.brush[status]) : words.account.cleared(label),
+        color,
+      })
+      return color
+    },
+    [commitExtras],
+  )
+
+  /** Adds the place, or removes it if it is already marked. */
+  const togglePin = useCallback(
+    (pin: Pin) => {
+      const { extras: mine, viewing: view, lang: language } = live.current
+      if (view) return null
+      const words = STRINGS[language].places
+      const has = mine.pins.some((p) => p.id === pin.id)
+      if (!has && mine.pins.length >= MAX_PINS) return null
+      commitExtras({ ...mine, pins: has ? mine.pins.filter((p) => p.id !== pin.id) : [...mine.pins, pin] })
+      setToast({ id: Date.now(), text: has ? words.removed(pin.name) : words.added(pin.name), color: has ? null : PIN_COLOR })
+      return has ? null : PIN_COLOR
+    },
+    [commitExtras],
+  )
+
+  const setNote = useCallback(
+    (a2: string, note: Note) => {
+      const notes = { ...live.current.extras.notes }
+      if (note.date || note.text) notes[a2] = note
+      else delete notes[a2]
+      commitExtras({ ...live.current.extras, notes })
+    },
+    [commitExtras],
+  )
+
+  /** A tap on the map: a place, a region or a country, depending on what is being marked. */
+  const pick = useCallback(
+    (hit: Hit) => {
+      const { viewing: view, pinMode: pinning, extras: mine, brush: active, lang: language, cities: known } = live.current
+      if (view?.kind === 'friend') return null
+      if (pinning && !view) {
+        const existing = hit.pin ? mine.pins.find((p) => p.id === hit.pin) : null
+        if (existing) return togglePin(existing)
+        const city = known ? nearestCity(known, hit.lng, hit.lat, 30) : null
+        if (city) return togglePin({ id: cityId(city), name: city.name, lat: city.lat, lng: city.lng, cc: city.cc })
+        const country = hit.a2 ? BY_A2.get(hit.a2) : null
+        return togglePin({
+          id: `p:${Date.now().toString(36)}`,
+          name: country ? countryName(country, language) : STRINGS[language].places.unnamed,
+          lat: Math.round(hit.lat * 1000) / 1000,
+          lng: Math.round(hit.lng * 1000) / 1000,
+          ...(hit.a2 ? { cc: hit.a2 } : {}),
+        })
+      }
+      if (hit.region && !view && active !== 'people') return toggleRegion(hit.region)
+      return hit.a2 ? toggle(hit.a2) : null
+    },
+    [toggle, togglePin, toggleRegion],
+  )
+
+  const statsRef = useRef(computeStats({}, new Set()))
+  const closeShare = useCallback(() => setSharing(false), [])
+  const renderShare = useCallback(
+    async (format: ShareFormat) =>
+      globe.current ? renderCard(globe.current.snapshot(1600), statsRef.current, lang, style, format) : null,
+    [lang, style],
+  )
+
+  const showPin = (pin: Pin) => {
+    setPage('map')
+    globe.current?.flyToPoint(pin.lng, pin.lat, 4)
+    sheet.setSnap('peek')
+  }
+
   const showOnMap = (a2: string) => {
     setPage('map')
     globe.current?.flyTo(a2)
@@ -391,7 +584,50 @@ export default function App() {
   const own = { statuses, people }
   const shown = viewing ?? own
   const stats = useMemo(() => computeStats(shown.statuses, shown.people), [shown.statuses, shown.people])
+  statsRef.current = stats
   const readOnly = viewing?.kind === 'friend'
+  /** Places, regions and notes belong to personal maps; on a shared one there are none. */
+  const shownExtras = viewing ? (viewing.extras ?? EMPTY_EXTRAS) : extras
+  const comparing = readOnly && compare && Object.values(statuses).some(isBeen)
+
+  // a newly earned achievement is announced once, on your own map
+  const ownStats = useMemo(() => computeStats(statuses, people), [statuses, people])
+  const earned = useMemo(() => unlocked({ statuses, stats: ownStats, extras }), [statuses, ownStats, extras])
+  const earnedBefore = useRef(earned)
+  useEffect(() => {
+    const fresh = earned.filter((id) => !earnedBefore.current.includes(id))
+    earnedBefore.current = earned
+    if (quiet.current) {
+      quiet.current = false
+      return
+    }
+    const last = ACHIEVEMENTS.find((a) => a.id === fresh[fresh.length - 1])
+    if (!last) return
+    // after the "marked" toast has had its moment
+    const timer = setTimeout(
+      () => setToast({ id: Date.now(), text: STRINGS[live.current.lang].achievements.unlocked(last.name[live.current.lang]), color: null }),
+      900,
+    )
+    return () => clearTimeout(timer)
+  }, [earned])
+
+  const cityHits = useMemo(
+    () => (cities && !viewing ? searchCities(cities, query, 6) : []),
+    [cities, viewing, query],
+  )
+  const pinned = useMemo(() => new Set(shownExtras.pins.map((p) => p.id)), [shownExtras.pins])
+  const compareCounts = useMemo(() => {
+    const counts = { me: 0, them: 0, both: 0 }
+    if (viewing?.kind !== 'friend') return counts
+    for (const a2 of new Set([...Object.keys(statuses), ...Object.keys(viewing.statuses)])) {
+      const mine = isBeen(statuses[a2])
+      const theirs = isBeen(viewing.statuses[a2])
+      if (mine && theirs) counts.both++
+      else if (mine) counts.me++
+      else if (theirs) counts.them++
+    }
+    return counts
+  }, [viewing, statuses])
   const common = useMemo(
     () =>
       viewing?.kind === 'friend'
@@ -409,18 +645,19 @@ export default function App() {
     const q = fold(query.trim())
     const rows = sorted.filter((c) => {
       const s = shown.statuses[c.a2]
-      if (filter === 'marked' && !s && !shown.people.has(c.a2)) return false
-      if (filter === 'wish' && s !== 'wish') return false
+      if (filter === 'people' ? !shown.people.has(c.a2) : filter !== 'all' && s !== filter) return false
       return !q || fold(c.name).includes(q) || fold(c.en).includes(q)
     })
     return CONTINENT_IDS.map((id) => ({ id, rows: rows.filter((c) => c.cont === id) })).filter((g) => g.rows.length)
   }, [query, filter, shown.statuses, shown.people, sorted])
 
-  const extras = [
+  const extraStats = [
     [t.extras.territories, stats.territories],
     [t.extras.transit, stats.transit],
     [t.extras.wish, stats.wish],
     [t.extras.people, stats.people],
+    [t.extras.places, shownExtras.pins.length],
+    [t.extras.regions, Object.keys(shownExtras.regions).length],
   ] as const
 
   const title = (
@@ -458,7 +695,7 @@ export default function App() {
         </div>
       ))}
       <p className="extras">
-        {extras
+        {extraStats
           .filter(([, n]) => n > 0)
           .map(([label, n]) => `${label}: ${n}`)
           .join(' · ')}
@@ -511,22 +748,35 @@ export default function App() {
     </div>
   )
 
-  const brushBar = (
+  // on the map the bar also offers the place marker; in the dashboard there is no map to tap
+  const brushBar = (onMap: boolean) => (
     <div className="brush" role="radiogroup" aria-label={t.brushLabel} hidden={readOnly}>
       <span className="brush-label">{t.brushLabel}</span>
       {BRUSHES.map((b) => (
         <button
           key={b.id}
           role="radio"
-          aria-checked={brush === b.id}
+          aria-checked={brush === b.id && !(onMap && pinMode)}
           className="brush-option"
           style={ink(b.color)}
-          onClick={() => setBrush(b.id)}
+          onClick={() => (setBrush(b.id), setPinMode(false))}
         >
           <i className={`swatch swatch-${b.id}`} />
           {t.brush[b.id]}
         </button>
       ))}
+      {onMap && !viewing && (
+        <button
+          role="radio"
+          aria-checked={pinMode}
+          className="brush-option"
+          style={ink(PIN_COLOR)}
+          onClick={() => setPinMode(true)}
+        >
+          <i className="swatch" />
+          {t.places.tool}
+        </button>
+      )}
     </div>
   )
 
@@ -555,7 +805,8 @@ export default function App() {
       <div className="filters" role="tablist">
         {FILTERS.map((f) => (
           <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)}>
-            {t.filters[f]}
+            {f !== 'all' && <i className={`swatch swatch-${f}`} style={ink(BRUSH_COLOR[f])} />}
+            {f === 'all' ? t.filters.all : t.brush[f]}
           </button>
         ))}
       </div>
@@ -564,7 +815,39 @@ export default function App() {
 
   const rows = (
     <>
-      {groups.length === 0 && (
+      {cityHits.length > 0 && (
+        <section>
+          <h2>{t.places.cities}</h2>
+          <ul>
+            {cityHits.map((c) => {
+              const id = cityId(c)
+              const country = BY_A2.get(c.cc)
+              return (
+                <li key={id}>
+                  <button
+                    className="row-mark"
+                    data-on={pinned.has(id) || undefined}
+                    style={ink(PIN_COLOR)}
+                    onClick={() => {
+                      if (togglePin({ id, name: c.name, lat: c.lat, lng: c.lng, cc: c.cc })) {
+                        globe.current?.flyToPoint(c.lng, c.lat, 4)
+                      }
+                    }}
+                  >
+                    <span className="row-flag">{flag(c.cc)}</span>
+                    <span className="row-label">
+                      {c.name}
+                      {country && <small>{countryName(country, lang)}</small>}
+                    </span>
+                    <i className="row-check" />
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      )}
+      {groups.length === 0 && cityHits.length === 0 && (
         <p className="list-empty">{query ? t.noMatch(query) : filter === 'wish' ? t.emptyWish : t.emptyMarked}</p>
       )}
       {groups.map((g) => (
@@ -584,12 +867,7 @@ export default function App() {
               const on = brush === 'people' ? knows : Boolean(s)
               const applied = brush === 'people' ? knows : s === brush
               return (
-                <li key={c.a2}>
-                  <button className="row-name" onClick={() => showOnMap(c.a2)} title={t.showOnMap}>
-                    <span className="row-flag">{flag(c.a2)}</span>
-                    <span className="row-label">{name}</span>
-                    {knows && <i className="swatch swatch-people" style={ink(PEOPLE_COLOR)} title={t.peopleBadge} />}
-                  </button>
+                <li key={c.a2} data-open={open === c.a2 || undefined}>
                   <button
                     className="row-mark"
                     data-on={on || undefined}
@@ -598,16 +876,42 @@ export default function App() {
                     onClick={() => toggle(c.a2)}
                     disabled={readOnly}
                     title={applied ? t.unmark(name) : t.mark(t.brush[brush], name)}
-                    aria-label={applied ? t.unmark(name) : t.mark(t.brush[brush], name)}
                   >
+                    <span className="row-flag">{flag(c.a2)}</span>
+                    <span className="row-label">{name}</span>
+                    {knows && <i className="swatch swatch-people" style={ink(PEOPLE_COLOR)} title={t.peopleBadge} />}
+                    {shownExtras.notes[c.a2]?.date && <small className="row-year">{shownExtras.notes[c.a2].date!.slice(0, 4)}</small>}
                     {s && (
                       <span className="row-status" style={ink(STATUS_BY_ID[s].color)}>
                         {brush === 'people' && <i className={`swatch swatch-${s}`} />}
                         {t.brush[s]}
                       </span>
                     )}
-                    <i />
+                    <i className="row-check" />
                   </button>
+                  <button
+                    className="row-more"
+                    aria-expanded={open === c.a2}
+                    onClick={() => setOpen(open === c.a2 ? null : c.a2)}
+                    title={t.details.open(name)}
+                    aria-label={t.details.open(name)}
+                  >
+                    <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="m6 8 4 4 4-4" />
+                    </svg>
+                  </button>
+                  {open === c.a2 && (
+                    <CountryDetails
+                      country={c}
+                      lang={lang}
+                      editable={!viewing}
+                      note={shownExtras.notes[c.a2]}
+                      regions={shownExtras.regions}
+                      onNote={(note) => setNote(c.a2, note)}
+                      onRegion={toggleRegion}
+                      onShow={() => showOnMap(c.a2)}
+                    />
+                  )}
                 </li>
               )
             })}
@@ -650,6 +954,20 @@ export default function App() {
           </button>
         </div>
 
+        {viewing?.kind !== 'shared' && (
+          <button
+            className="layer-toggle"
+            aria-pressed={regionLevel}
+            onClick={() => setRegionLevel((on) => !on)}
+            title={[...REGION_COUNTRIES].map((a2) => flag(a2)).join(' ')}
+          >
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 4.5h6v5H3zM11 4.5h6v7h-6zM3 11.5h6v4H3zM11 13.5h6v2h-6z" />
+            </svg>
+            <span>{t.regions.toggle}</span>
+          </button>
+        )}
+
         <button
           className="panel-toggle"
           aria-expanded={settings.panel}
@@ -673,29 +991,43 @@ export default function App() {
           ref={globe}
           statuses={shown.statuses}
           people={shown.people}
+          pins={shownExtras.pins}
+          regions={shownExtras.regions}
+          regionLevel={regionLevel}
+          compare={comparing ? statuses : null}
           mode={mode}
           style={style}
           lang={lang}
-          onPick={toggle}
+          onPick={pick}
         />
 
         {viewing && (
           <div className="viewing" data-above-brush={!readOnly || undefined}>
             <span>
               {viewing.kind === 'friend' ? (
-                <>
-                  <strong>{t.account.viewing(viewing.username)}</strong> · {t.account.common(common)}
-                </>
+                <strong>{t.account.viewing(viewing.username)}</strong>
               ) : (
                 <>
                   <strong>{t.account.sharedTitle(viewing.name)}</strong> · {t.account.people(viewing.members)}
                 </>
               )}
             </span>
-            <button onClick={() => setViewing(null)}>{t.account.back}</button>
+            {viewing.kind === 'friend' && comparing && (
+              <span className="legend">
+                <i className="swatch" style={ink(COMPARE.me)} /> {t.compare.me} {compareCounts.me}
+                <i className="swatch" style={ink(COMPARE.them)} /> {t.compare.them(viewing.username)} {compareCounts.them}
+                <i className="swatch" style={ink(COMPARE.both)} /> {t.compare.both} {compareCounts.both}
+              </span>
+            )}
+            {viewing.kind === 'friend' && Object.values(statuses).some(isBeen) && (
+              <button className="ghost" aria-pressed={compare} onClick={() => setCompare((on) => !on)}>
+                {t.compare.toggle}
+              </button>
+            )}
+            <button onClick={stopViewing}>{t.account.back}</button>
           </div>
         )}
-        {brushBar}
+        {brushBar(true)}
       </main>
 
       <aside
@@ -748,6 +1080,24 @@ export default function App() {
                   {progress}
                 </div>
               </section>
+              <Achievements lang={lang} statuses={shown.statuses} stats={stats} extras={shownExtras} />
+              {viewing?.kind !== 'shared' && (
+                <Places lang={lang} pins={shownExtras.pins} editable={!viewing} onShow={showPin} onRemove={togglePin} />
+              )}
+              {!viewing && (
+                <Timeline
+                  lang={lang}
+                  extras={extras}
+                  onOpen={(a2) => {
+                    setQuery('')
+                    setFilter('all')
+                    setOpen(a2)
+                    requestAnimationFrame(() =>
+                      document.querySelector('.hub li[data-open]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
+                    )
+                  }}
+                />
+              )}
               <section className="card options">
                 <h2 className="card-title">{t.options}</h2>
                 <div className="option">
@@ -773,30 +1123,28 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-                <button
-                  className="primary"
-                  onClick={() => globe.current && downloadPoster(globe.current.snapshot(1600), stats, lang, style)}
-                >
-                  <DownloadIcon /> {t.download}
+                <button className="primary" onClick={() => setSharing(true)}>
+                  <DownloadIcon /> {t.share.open}
                 </button>
               </section>
             </div>
 
             <section className="card countries">
               <h2 className="card-title">{t.countriesTitle}</h2>
-              {brushBar}
+              {brushBar(false)}
               {syncNote}
               {finder}
               <div className="list">{rows}</div>
             </section>
 
             <section className="card">
-              {account && <h2 className="card-title">{t.account.title}</h2>}
               <Account lang={lang} account={account} onViewFriend={viewFriend} onOpenShared={openShared} />
             </section>
           </div>
         </div>
       )}
+
+      {sharing && <Share lang={lang} render={renderShare} onClose={closeShare} />}
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import { geoDistance, geoNaturalEarth1, geoOrthographic, geoPath } from 'd3-geo'
+import { PIN_COLOR, type Pin } from './extras'
 import type { Layer, Shape } from './geo'
-import { BY_A2, PEOPLE_COLOR, STATUSES, type MapMode, type MapStyle, type Status, type Statuses } from './model'
+import { BY_A2, PEOPLE_COLOR, STATUSES, STATUS_BY_ID, isBeen, type MapMode, type MapStyle, type Status, type Statuses } from './model'
 
 export interface View {
   /** Longitude / latitude at the centre of the map. */
@@ -24,10 +25,21 @@ export interface Scene {
   layer: Layer | null
   statuses: Statuses
   people: ReadonlySet<string>
+  pins: readonly Pin[]
+  /** Markings of states and provinces, and their shapes once loaded. */
+  regions: Statuses
+  regionShapes: readonly Shape[] | null
+  /** Draw the outlines of every region, not only the marked ones. */
+  regionBorders: boolean
+  /** Someone else's map is shown: colour by who has been where, against these markings of your own. */
+  compare: Statuses | null
 }
 
+/** Colours of the comparison view. */
+export const COMPARE = { me: '#1E9BFF', them: '#FF5A36', both: '#17B890' }
+
 export interface Overlay {
-  hover: string | null
+  hover: readonly Shape[]
   pulses: Pulse[]
 }
 
@@ -237,32 +249,62 @@ function shadeGlobe(ctx: CanvasRenderingContext2D, w: number, h: number, scale: 
   ctx.fill(region, 'evenodd')
 }
 
-function fillShapes(ctx: CanvasRenderingContext2D, path: Path2D, status: Status | undefined, style: MapStyle) {
+interface Fill {
+  /** Null leaves the land unmarked. */
+  color: string | null
+  hatch?: boolean
+  /** A country marked only in part: its marked regions are drawn at full strength on top. */
+  faint?: boolean
+}
+
+function fillShapes(ctx: CanvasRenderingContext2D, path: Path2D, fill: Fill, style: MapStyle) {
   const photo = style !== 'plain'
-  if (status) {
-    // over a photo the marking is a tint, so the terrain and city lights stay visible
-    ctx.globalAlpha = photo ? 0.62 : 1
-    ctx.fillStyle = STATUSES.find((s) => s.id === status)!.color
+  if (!photo && (!fill.color || fill.faint)) {
+    ctx.fillStyle = LAND
     ctx.fill(path, 'evenodd')
-    if (status === 'wish') {
+  }
+  if (fill.color) {
+    // over a photo the marking is a tint, so the terrain and city lights stay visible
+    ctx.globalAlpha = (photo ? 0.62 : 1) * (fill.faint ? 0.38 : 1)
+    ctx.fillStyle = fill.color
+    ctx.fill(path, 'evenodd')
+    if (fill.hatch) {
       ctx.fillStyle = wishHatch(ctx) ?? LAND
       ctx.fill(path, 'evenodd')
     }
     ctx.globalAlpha = 1
-  } else if (!photo) {
-    ctx.fillStyle = LAND
-    ctx.fill(path, 'evenodd')
   }
-  ctx.strokeStyle = status
+  ctx.strokeStyle = fill.color
     ? 'rgba(255, 255, 255, 0.9)'
     : style === 'night'
       ? 'rgba(170, 195, 255, 0.28)'
       : photo
         ? 'rgba(255, 255, 255, 0.45)'
         : BORDER
-  ctx.lineWidth = status ? 1 : photo ? 0.6 : 0.8
+  ctx.lineWidth = fill.color ? 1 : photo ? 0.6 : 0.8
   ctx.lineJoin = 'round'
   ctx.stroke(path)
+}
+
+const statusFill = (status: Status, faint = false): Fill => ({
+  color: STATUS_BY_ID[status].color,
+  hatch: status === 'wish',
+  faint,
+})
+
+/** How a country is filled, and a key that is equal for countries filled alike. */
+function fillOf(a2: string | null, scene: Scene, partial: ReadonlySet<string>): [string, Fill] {
+  if (!a2) return ['none', { color: null }]
+  if (scene.compare) {
+    const mine = isBeen(scene.compare[a2])
+    const theirs = isBeen(scene.statuses[a2])
+    const who = mine && theirs ? 'both' : mine ? 'me' : theirs ? 'them' : null
+    return who ? [who, { color: COMPARE[who] }] : ['none', { color: null }]
+  }
+  const status = scene.statuses[a2]
+  if (!status) return ['none', { color: null }]
+  const faint = partial.has(a2)
+  return [faint ? `${status}~` : status, statusFill(status, faint)]
 }
 
 // ---------- painters ----------
@@ -273,7 +315,7 @@ function fillShapes(ctx: CanvasRenderingContext2D, path: Path2D, status: Status 
  * underneath shows through.
  */
 export function paintMap(ctx: CanvasRenderingContext2D, w: number, h: number, scene: Scene) {
-  const { mode, style, view, layer, statuses } = scene
+  const { mode, style, view, layer } = scene
   const scale = baseScale(mode, w, h) * view.zoom
   const span = mode === 'globe' ? scale : scale * 1.4
   const outline = outlineOf(mode, w, h, view)
@@ -305,10 +347,36 @@ export function paintMap(ctx: CanvasRenderingContext2D, w: number, h: number, sc
 
   if (layer) {
     const trace = makeTracer(mode, w, h, view)
-    const groups: Record<Status | 'none', Shape[]> = { none: [], visited: [], lived: [], transit: [], wish: [] }
-    for (const s of visibleShapes(layer, mode, w, h, view)) groups[(s.a2 && statuses[s.a2]) || 'none'].push(s)
-    for (const id of ['none', 'visited', 'lived', 'transit', 'wish'] as const) {
-      if (groups[id].length) fillShapes(ctx, trace(groups[id]), id === 'none' ? undefined : id, style)
+    const regions = scene.compare ? null : scene.regionShapes
+    // countries with marked regions are drawn pale, so the marked parts stand out
+    const partial = new Set(regions ? Object.keys(scene.regions).map((id) => id.slice(0, 2)) : [])
+
+    const groups = new Map<string, { fill: Fill; shapes: Shape[] }>()
+    for (const s of visibleShapes(layer, mode, w, h, view)) {
+      const [key, fill] = fillOf(s.a2, scene, partial)
+      const group = groups.get(key)
+      if (group) group.shapes.push(s)
+      else groups.set(key, { fill, shapes: [s] })
+    }
+    // unmarked land first, so the brighter outlines of marked countries stay on top
+    const none = groups.get('none')
+    if (none) fillShapes(ctx, trace(none.shapes), none.fill, style)
+    for (const [key, group] of groups) if (key !== 'none') fillShapes(ctx, trace(group.shapes), group.fill, style)
+
+    if (regions) {
+      const visible = visibleShapes({ shapes: regions as Shape[] }, mode, w, h, view) as (Shape & { id?: string })[]
+      if (scene.regionBorders && visible.length) {
+        ctx.strokeStyle = style === 'plain' ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.3)'
+        ctx.lineWidth = 0.6
+        ctx.lineJoin = 'round'
+        ctx.stroke(trace(visible))
+      }
+      const marked = new Map<Status, Shape[]>()
+      for (const s of visible) {
+        const status = s.id ? scene.regions[s.id] : undefined
+        if (status) marked.set(status, [...(marked.get(status) ?? []), s])
+      }
+      for (const [status, shapes] of marked) fillShapes(ctx, trace(shapes), statusFill(status), style)
     }
   }
 
@@ -316,7 +384,7 @@ export function paintMap(ctx: CanvasRenderingContext2D, w: number, h: number, sc
   paintMarkers(ctx, w, h, scene, outline)
 }
 
-/** Dots, "know people" rings and the rim: cheap, and always on top of the fills. */
+/** Dots, "know people" rings, pins and the rim: cheap, and always on top of the fills. */
 function paintMarkers(ctx: CanvasRenderingContext2D, w: number, h: number, scene: Scene, outline: Path2D) {
   const { mode, view, statuses, people } = scene
   const projection = makeProjection(mode, w, h, view)
@@ -325,33 +393,50 @@ function paintMarkers(ctx: CanvasRenderingContext2D, w: number, h: number, scene
     mode === 'flat' || geoDistance([lng, lat], centre) < Math.PI / 2 - 0.02
 
   // dots for marked micro-states and islands
-  for (const [a2, status] of Object.entries(statuses)) {
-    const c = BY_A2.get(a2)
-    if (!c || c.area >= DOT_BELOW_KM2 || !visible(c.lng, c.lat)) continue
-    const p = projection([c.lng, c.lat])
+  if (!scene.compare) {
+    for (const [a2, status] of Object.entries(statuses)) {
+      const c = BY_A2.get(a2)
+      if (!c || c.area >= DOT_BELOW_KM2 || !visible(c.lng, c.lat)) continue
+      const p = projection([c.lng, c.lat])
+      if (!p) continue
+      ctx.beginPath()
+      ctx.arc(p[0], p[1], 4.5, 0, Math.PI * 2)
+      ctx.fillStyle = STATUSES.find((s) => s.id === status)!.color
+      ctx.fill()
+      ctx.strokeStyle = '#fff'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
+
+    // "know people from" rings sit on top of whatever the country is filled with
+    for (const a2 of people) {
+      const c = BY_A2.get(a2)
+      if (!c || !visible(c.lng, c.lat)) continue
+      const p = projection([c.lng, c.lat])
+      if (!p) continue
+      ctx.beginPath()
+      ctx.arc(p[0], p[1], 7.5, 0, Math.PI * 2)
+      ctx.strokeStyle = '#fff'
+      ctx.lineWidth = 5.5
+      ctx.stroke()
+      ctx.strokeStyle = PEOPLE_COLOR
+      ctx.lineWidth = 3
+      ctx.stroke()
+    }
+  }
+
+  // places: small at world scale so a well-travelled region does not turn into a blob
+  const size = Math.min(6, 3 + view.zoom * 0.6)
+  for (const pin of scene.pins) {
+    if (!visible(pin.lng, pin.lat)) continue
+    const p = projection([pin.lng, pin.lat])
     if (!p) continue
     ctx.beginPath()
-    ctx.arc(p[0], p[1], 4.5, 0, Math.PI * 2)
-    ctx.fillStyle = STATUSES.find((s) => s.id === status)!.color
+    ctx.arc(p[0], p[1], size, 0, Math.PI * 2)
+    ctx.fillStyle = PIN_COLOR
     ctx.fill()
     ctx.strokeStyle = '#fff'
     ctx.lineWidth = 1.5
-    ctx.stroke()
-  }
-
-  // "know people from" rings sit on top of whatever the country is filled with
-  for (const a2 of people) {
-    const c = BY_A2.get(a2)
-    if (!c || !visible(c.lng, c.lat)) continue
-    const p = projection([c.lng, c.lat])
-    if (!p) continue
-    ctx.beginPath()
-    ctx.arc(p[0], p[1], 7.5, 0, Math.PI * 2)
-    ctx.strokeStyle = '#fff'
-    ctx.lineWidth = 5.5
-    ctx.stroke()
-    ctx.strokeStyle = PEOPLE_COLOR
-    ctx.lineWidth = 3
     ctx.stroke()
   }
 
@@ -363,11 +448,11 @@ function paintMarkers(ctx: CanvasRenderingContext2D, w: number, h: number, scene
 
 /** Hover highlight and click rings, drawn over a cached paintMap frame. */
 export function paintOverlay(ctx: CanvasRenderingContext2D, w: number, h: number, scene: Scene, overlay: Overlay) {
-  const { mode, view, layer } = scene
+  const { mode, view } = scene
   const { hover, pulses } = overlay
 
-  if (hover && layer) {
-    const path = makeTracer(mode, w, h, view)(layer.shapes.filter((s) => s.a2 === hover))
+  if (hover.length) {
+    const path = makeTracer(mode, w, h, view)(hover)
     const photo = scene.style !== 'plain'
     ctx.fillStyle = photo ? 'rgba(255, 255, 255, 0.2)' : 'rgba(20, 24, 51, 0.14)'
     ctx.fill(path, 'evenodd')

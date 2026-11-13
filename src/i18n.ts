@@ -31,8 +31,44 @@ interface Strings {
   zoomIn: string
   zoomOut: string
   download: string
+  share: {
+    open: string
+    title: string
+    format: string
+    formats: { story: string; post: string }
+    preview: string
+    send: string
+    save: string
+    close: string
+    note: string
+  }
+  findOnMap(country: string): string
   progress: string
-  extras: { territories: string; transit: string; wish: string; people: string }
+  extras: { territories: string; transit: string; wish: string; people: string; places: string; regions: string }
+  places: {
+    tool: string
+    title: string
+    cities: string
+    unnamed: string
+    added(name: string): string
+    removed(name: string): string
+    remove(name: string): string
+    empty: string
+  }
+  regions: {
+    toggle: string
+    title: string
+    loading: string
+  }
+  details: {
+    open(country: string): string
+    when: string
+    note: string
+    notePlaceholder: string
+  }
+  timeline: { title: string; empty: string; undated: string }
+  achievements: { title: string; unlocked(name: string): string; count(n: number, total: number): string }
+  compare: { toggle: string; me: string; them(name: string): string; both: string }
   search: string
   filters: { all: string; marked: string; wish: string }
   noMatch(q: string): string
@@ -53,6 +89,18 @@ interface Strings {
     password: string
     username: string
     usernameHelp: string
+    google: string
+    apple: string
+    or: string
+    chooseTitle: string
+    chooseHelp: string
+    chooseSave: string
+    publicTitle: string
+    publicHelp: string
+    publicOn: string
+    copyLink: string
+    copied: string
+    notPublic: string
     submitLogIn: string
     submitSignUp: string
     working: string
@@ -140,14 +188,65 @@ const pl: Strings = {
   zoomIn: 'Przybliż',
   zoomOut: 'Oddal',
   download: 'Pobierz mapę',
+  share: {
+    open: 'Udostępnij mapę',
+    title: 'Udostępnij swoją mapę',
+    format: 'Format',
+    formats: { story: 'Relacja 9:16', post: 'Post 4:5' },
+    preview: 'Podgląd karty z mapą',
+    send: 'Udostępnij',
+    save: 'Zapisz obraz',
+    close: 'Zamknij',
+    note: 'Na telefonie „Udostępnij” otwiera listę aplikacji — wybierz Instagram, żeby dodać kartę do relacji.',
+  },
+  findOnMap: (country) => `Pokaż na mapie: ${country}`,
   progress: 'Postęp na kontynentach',
   extras: {
     territories: 'Terytoria zależne',
     transit: 'Przejazdem',
     wish: 'Do odwiedzenia',
     people: 'Znam ludzi z',
+    places: 'Miejsca',
+    regions: 'Regiony',
   },
-  search: 'Szukaj kraju',
+  places: {
+    tool: 'Miejsce',
+    title: 'Miejsca',
+    cities: 'Miasta',
+    unnamed: 'Pinezka',
+    added: (name) => `📍 ${name}: dodano`,
+    removed: (name) => `${name}: usunięto pinezkę`,
+    remove: (name) => `Usuń miejsce: ${name}`,
+    empty: 'Wybierz „Miejsce” pod mapą i kliknij miasto albo wpisz jego nazwę w wyszukiwarce.',
+  },
+  regions: {
+    toggle: 'Regiony',
+    title: 'Regiony',
+    loading: 'Wczytuję regiony…',
+  },
+  details: {
+    open: (country) => `Szczegóły: ${country}`,
+    when: 'Kiedy',
+    note: 'Notatka',
+    notePlaceholder: 'Z kim, co warto zapamiętać…',
+  },
+  timeline: {
+    title: 'Oś czasu',
+    empty: 'Rozwiń kraj na liście i dodaj datę podróży — pojawi się tutaj.',
+    undated: 'Bez daty',
+  },
+  achievements: {
+    title: 'Osiągnięcia',
+    unlocked: (name) => `🏆 Osiągnięcie: ${name}`,
+    count: (n, total) => `${n} z ${total}`,
+  },
+  compare: {
+    toggle: 'Porównaj ze mną',
+    me: 'Tylko ja',
+    them: (name) => `Tylko @${name}`,
+    both: 'Oboje',
+  },
+  search: 'Szukaj kraju lub miasta',
   filters: { all: 'Wszystkie', marked: 'Zaznaczone', wish: 'Do odwiedzenia' },
   noMatch: (q) => `Brak kraju pasującego do „${q}”.`,
   emptyWish: 'Lista jest pusta. Wybierz „Chcę odwiedzić” pod mapą i zaznacz kraje, o których marzysz.',
@@ -167,6 +266,18 @@ const pl: Strings = {
     password: 'Hasło',
     username: 'Nazwa użytkownika',
     usernameHelp: '3–20 znaków: małe litery, cyfry i podkreślnik. Po niej znajdą Cię znajomi.',
+    google: 'Kontynuuj z Google',
+    apple: 'Kontynuuj z Apple',
+    or: 'albo e-mailem',
+    chooseTitle: 'Wybierz nazwę użytkownika',
+    chooseHelp: 'Jeszcze jeden krok: po tej nazwie znajdą Cię znajomi.',
+    chooseSave: 'Zapisz',
+    publicTitle: 'Publiczny link',
+    publicHelp: 'Każdy, kto dostanie link, zobaczy Twoją mapę bez zakładania konta. Notatki zostają prywatne.',
+    publicOn: 'Mapa widoczna przez link',
+    copyLink: 'Kopiuj link',
+    copied: 'Link skopiowany.',
+    notPublic: 'Ta mapa nie jest publiczna albo nie istnieje.',
     submitLogIn: 'Zaloguj się',
     submitSignUp: 'Załóż konto',
     working: 'Chwila…',
@@ -258,14 +369,65 @@ const en: Strings = {
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',
   download: 'Download map',
+  share: {
+    open: 'Share the map',
+    title: 'Share your map',
+    format: 'Format',
+    formats: { story: 'Story 9:16', post: 'Post 4:5' },
+    preview: 'Preview of the map card',
+    send: 'Share',
+    save: 'Save image',
+    close: 'Close',
+    note: 'On a phone, “Share” opens your apps — pick Instagram to add the card to your story.',
+  },
+  findOnMap: (country) => `Show on the map: ${country}`,
   progress: 'Progress by continent',
   extras: {
     territories: 'Territories',
     transit: 'Passed through',
     wish: 'Want to visit',
     people: 'Know people from',
+    places: 'Places',
+    regions: 'Regions',
   },
-  search: 'Search countries',
+  places: {
+    tool: 'Place',
+    title: 'Places',
+    cities: 'Cities',
+    unnamed: 'Pin',
+    added: (name) => `📍 ${name}: added`,
+    removed: (name) => `${name}: pin removed`,
+    remove: (name) => `Remove place: ${name}`,
+    empty: 'Pick “Place” under the map and tap a city, or type its name into the search box.',
+  },
+  regions: {
+    toggle: 'Regions',
+    title: 'Regions',
+    loading: 'Loading regions…',
+  },
+  details: {
+    open: (country) => `Details: ${country}`,
+    when: 'When',
+    note: 'Note',
+    notePlaceholder: 'Who with, what to remember…',
+  },
+  timeline: {
+    title: 'Timeline',
+    empty: 'Open a country in the list and add a travel date — it will show up here.',
+    undated: 'No date',
+  },
+  achievements: {
+    title: 'Achievements',
+    unlocked: (name) => `🏆 Achievement: ${name}`,
+    count: (n, total) => `${n} of ${total}`,
+  },
+  compare: {
+    toggle: 'Compare with me',
+    me: 'Only me',
+    them: (name) => `Only @${name}`,
+    both: 'Both',
+  },
+  search: 'Search countries and cities',
   filters: { all: 'All', marked: 'Marked', wish: 'Want to visit' },
   noMatch: (q) => `No country matches “${q}”.`,
   emptyWish: 'Nothing here yet. Choose “Want to visit” below the map and mark the countries you dream of.',
@@ -285,6 +447,18 @@ const en: Strings = {
     password: 'Password',
     username: 'Username',
     usernameHelp: '3–20 characters: lowercase letters, digits and underscore. Friends find you by it.',
+    google: 'Continue with Google',
+    apple: 'Continue with Apple',
+    or: 'or with e-mail',
+    chooseTitle: 'Choose a username',
+    chooseHelp: 'One more step: friends will find you by this name.',
+    chooseSave: 'Save',
+    publicTitle: 'Public link',
+    publicHelp: 'Anyone with the link can see your map without an account. Notes stay private.',
+    publicOn: 'Map visible through the link',
+    copyLink: 'Copy link',
+    copied: 'Link copied.',
+    notPublic: 'This map is not public or does not exist.',
     submitLogIn: 'Log in',
     submitSignUp: 'Create account',
     working: 'One moment…',
