@@ -20,10 +20,11 @@ import {
   EMPTY_EXTRAS,
   MAX_PINS,
   PIN_COLOR,
-  hasExtras,
   loadExtras,
+  loadExtrasSynced,
   mergeExtras,
   saveExtras,
+  saveExtrasSynced,
   type Extras,
   type Note,
   type Pin,
@@ -272,6 +273,7 @@ export default function App() {
         // the map belongs to the account; don't leave it behind for the next person
         cloudReady.current = false
         saveOwner(null)
+        saveExtrasSynced(null)
         setStatuses({})
         setPeople(new Set())
         setExtras(EMPTY_EXTRAS)
@@ -293,33 +295,48 @@ export default function App() {
         const remote = await fetchMap(accountId)
         if (cancelled) return
         const owner = loadOwner()
-        const local = { statuses: live.current.statuses, people: live.current.people, extras: live.current.extras }
-        const empty = { statuses: {}, people: new Set<string>(), extras: EMPTY_EXTRAS }
+        const local: CloudMap = { statuses: live.current.statuses, people: live.current.people }
+        const empty: CloudMap = { statuses: {}, people: new Set() }
+        const localExtras = live.current.extras
+        const remoteExtras = remote?.extras ?? EMPTY_EXTRAS
         let next: CloudMap
-        if (owner === accountId) next = remote ?? local // local copy is just this account's cache
-        else if (owner) next = remote ?? empty // cache left over from another account
-        else if (!remote) next = local // first sign-in: the anonymous map becomes the account's map
-        else {
-          // anonymous marks made before signing in are added to the account's map
-          next = {
-            statuses: { ...local.statuses, ...remote.statuses },
-            people: new Set([...local.people, ...remote.people]),
-            extras: mergeExtras(local.extras, remote.extras ?? EMPTY_EXTRAS),
-          }
+        let nextExtras: Extras
+        if (owner === accountId) {
+          // the local copy is just this account's cache…
+          next = remote ?? local
+          // …except for places and notes made before the account first stored any
+          nextExtras =
+            loadExtrasSynced() === accountId && remote ? remoteExtras : mergeExtras(localExtras, remoteExtras)
+        } else if (owner) {
+          // cache left over from another account
+          next = remote ?? empty
+          nextExtras = remoteExtras
+        } else {
+          // first sign-in on this device: anonymous marks are added to the account's map
+          next = remote
+            ? {
+                statuses: { ...local.statuses, ...remote.statuses },
+                people: new Set([...local.people, ...remote.people]),
+              }
+            : local
+          nextExtras = mergeExtras(localExtras, remoteExtras)
         }
-        // a database that predates places and notes returns none: keep what this device has
-        const nextExtras = next.extras && (hasExtras(next.extras) || next !== remote) ? next.extras : local.extras
         live.current.statuses = next.statuses
         live.current.people = next.people
         live.current.extras = nextExtras
         setStatuses(next.statuses)
         setPeople(next.people)
         setExtras(nextExtras)
+        // loading a whole map is not the moment to announce achievements
         quiet.current = true
+        setTimeout(() => (quiet.current = false), 1500)
         saveOwner(accountId)
         cloudReady.current = true
         // the account doesn't hold this exact map yet: store it now rather than on the next edit
-        if (next !== remote || nextExtras !== remote.extras) await saveMap(accountId, { ...next, extras: nextExtras })
+        if (next !== remote || JSON.stringify(nextExtras) !== JSON.stringify(remoteExtras)) {
+          await saveMap(accountId, { ...next, extras: nextExtras })
+        }
+        saveExtrasSynced(accountId)
         setSyncFailed(false)
       } catch {
         if (!cancelled) setSyncFailed(true)
@@ -441,7 +458,17 @@ export default function App() {
       const marks = { ...current.statuses }
       added = current.statuses[a2] !== active
       if (added) marks[a2] = active
-      else delete marks[a2]
+      else {
+        delete marks[a2]
+        // a country that is no longer marked keeps no marked regions either
+        const mine = live.current.extras
+        const kept = Object.entries(mine.regions).filter(([id]) => !id.startsWith(`${a2}-`))
+        if (!view && kept.length !== Object.keys(mine.regions).length) {
+          const cleared = { ...mine, regions: Object.fromEntries(kept) }
+          live.current.extras = cleared
+          setExtras(cleared)
+        }
+      }
       next = { statuses: marks, people: current.people }
     }
     const color = added ? BRUSH_COLOR[active] : null
@@ -597,10 +624,7 @@ export default function App() {
   useEffect(() => {
     const fresh = earned.filter((id) => !earnedBefore.current.includes(id))
     earnedBefore.current = earned
-    if (quiet.current) {
-      quiet.current = false
-      return
-    }
+    if (quiet.current) return
     const last = ACHIEVEMENTS.find((a) => a.id === fresh[fresh.length - 1])
     if (!last) return
     // after the "marked" toast has had its moment
@@ -674,7 +698,7 @@ export default function App() {
           ? `${t.account.shared} · ${t.account.people(viewing.members)}`
           : viewing?.kind === 'friend'
             ? t.account.common(common)
-            : account
+            : account?.username
               ? `@${account.username}`
               : t.localOnly}
       </p>
@@ -756,7 +780,7 @@ export default function App() {
         <button
           key={b.id}
           role="radio"
-          aria-checked={brush === b.id && !(onMap && pinMode)}
+          aria-checked={brush === b.id && !(onMap && pinMode && !viewing)}
           className="brush-option"
           style={ink(b.color)}
           onClick={() => (setBrush(b.id), setPinMode(false))}

@@ -106,3 +106,25 @@ export function saveExtras(extras: Extras) {
     // storage unavailable (private mode) — the map still works for this visit
   }
 }
+
+// Which account's places and notes the server is known to hold. Until an
+// account has stored them once, what this device has is merged in rather than
+// replaced, so nothing marked before the first sync is lost.
+const SYNCED_KEY = 'been-map:extras-synced:v1'
+
+export function loadExtrasSynced(): string | null {
+  try {
+    return localStorage.getItem(SYNCED_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function saveExtrasSynced(accountId: string | null) {
+  try {
+    if (accountId) localStorage.setItem(SYNCED_KEY, accountId)
+    else localStorage.removeItem(SYNCED_KEY)
+  } catch {
+    // see saveExtras
+  }
+}
