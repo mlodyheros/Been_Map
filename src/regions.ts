@@ -1,13 +1,28 @@
 import { useEffect, useState } from 'react'
-import { geoBounds, geoCentroid, geoContains, geoDistance } from 'd3-geo'
+import { geoArea, geoBounds, geoCentroid, geoContains, geoDistance } from 'd3-geo'
 import { feature } from 'topojson-client'
-import type { Feature, MultiPolygon, Polygon } from 'geojson'
+import type { Feature, MultiPolygon, Polygon, Position } from 'geojson'
+import countries from './data/region-countries.json'
 import type { GeometryCollection, Topology } from 'topojson-specification'
 import type { Shape } from './geo'
 import type { Lang } from './i18n'
 
-/** Countries that can be marked state by state. Kept in step with scripts/build-regions.mjs. */
-export const REGION_COUNTRIES = new Set(['US', 'CA', 'MX', 'BR', 'AR', 'AU', 'RU', 'CN', 'IN', 'PL', 'DE'])
+/** Countries that can be marked region by region; written by scripts/build-regions.mjs. */
+export const REGION_COUNTRIES = new Set<string>(countries)
+
+/**
+ * d3 reads a ring's direction to tell inside from outside. A ring stored the
+ * other way round (simplifying a tiny shape can do that) covers the whole
+ * globe except the shape itself, and then every tap anywhere lands in it.
+ * Any polygon claiming more than half the sphere is turned the right way.
+ */
+function rightWayOut(geometry: Polygon | MultiPolygon): Polygon | MultiPolygon {
+  const fix = (rings: Position[][]) =>
+    geoArea({ type: 'Polygon', coordinates: rings }) > 2 * Math.PI ? rings.map((r) => [...r].reverse()) : rings
+  return geometry.type === 'Polygon'
+    ? { ...geometry, coordinates: fix(geometry.coordinates) }
+    : { ...geometry, coordinates: geometry.coordinates.map(fix) }
+}
 
 export interface Region extends Shape {
   /** ISO 3166-2 code, e.g. "US-CA". */
@@ -37,7 +52,8 @@ export function loadRegions(): Promise<Regions> {
       const list = feature(file, file.objects.regions).features as Feature<Polygon | MultiPolygon, Props>[]
       const shapes = list
         .filter((f) => f.geometry)
-        .map((f): Region => {
+        .map((raw): Region => {
+          const f = { ...raw, geometry: rightWayOut(raw.geometry) }
           const bounds = geoBounds(f)
           const centre = geoCentroid(f)
           const [[w, s], [e, n]] = bounds
@@ -95,4 +111,33 @@ export function useRegions(want: boolean): Regions | null {
     }
   }, [want, data])
   return data
+}
+
+const RAD = Math.PI / 180
+
+/**
+ * For a tap that lands in a country with regions but in none of them: a thin
+ * island like Manhattan can fall between simplified outlines. Picks the region
+ * of that country with an outline point nearest to the tap, if one is close.
+ */
+export function nearestRegion(regions: Regions, a2: string, lng: number, lat: number, withinKm: number): Region | null {
+  const cos = Math.cos(lat * RAD)
+  let best: Region | null = null
+  let bestKm = withinKm
+  for (const r of regions.byCountry.get(a2) ?? []) {
+    const g = r.feature.geometry
+    const polygons = g.type === 'Polygon' ? [g.coordinates] : g.coordinates
+    for (const polygon of polygons) {
+      for (const ring of polygon) {
+        for (const [x, y] of ring) {
+          const km = Math.hypot((x - lng) * cos, y - lat) * RAD * 6371
+          if (km < bestKm) {
+            bestKm = km
+            best = r
+          }
+        }
+      }
+    }
+  }
+  return best
 }

@@ -27,16 +27,27 @@ export function loadCities(): Promise<City[]> {
   return pending
 }
 
-// The list has English names; these are the Polish ones people are most likely to type.
+// The list mostly uses English (sometimes local) names; these are the Polish
+// ones people are likely to type. Keys and values are already folded.
 const POLISH: [string, string][] = [
   ['warszawa', 'warsaw'], ['praga', 'prague'], ['rzym', 'rome'], ['paryz', 'paris'], ['londyn', 'london'],
   ['wieden', 'vienna'], ['lizbona', 'lisbon'], ['ateny', 'athens'], ['kopenhaga', 'copenhagen'],
   ['sztokholm', 'stockholm'], ['bruksela', 'brussels'], ['moskwa', 'moscow'], ['kijow', 'kyiv'],
-  ['wilno', 'vilnius'], ['ryga', 'riga'], ['budapeszt', 'budapest'], ['bukareszt', 'bucharest'],
-  ['nowy jork', 'new york city'], ['pekin', 'beijing'], ['tokio', 'tokyo'], ['wenecja', 'venice'],
-  ['mediolan', 'milan'], ['neapol', 'naples'], ['monachium', 'munich'], ['kolonia', 'cologne'],
-  ['genewa', 'geneva'], ['zurych', 'zurich'], ['florencja', 'florence'], ['stambul', 'istanbul'],
-  ['kair', 'cairo'], ['dubaj', 'dubai'], ['lwow', 'lviv'], ['belgrad', 'belgrade'], ['zagrzeb', 'zagreb'],
+  ['wilno', 'vilnius'], ['ryga', 'riga'], ['tallin', 'tallinn'], ['budapeszt', 'budapest'],
+  ['bukareszt', 'bucharest'], ['sofia', 'sofia'], ['nowy jork', 'new york city'], ['pekin', 'beijing'],
+  ['tokio', 'tokyo'], ['wenecja', 'venice'], ['mediolan', 'milan'], ['neapol', 'naples'], ['turyn', 'turin'],
+  ['genua', 'genoa'], ['florencja', 'florence'], ['monachium', 'munich'], ['kolonia', 'koln'],
+  ['norymberga', 'nurnberg'], ['drezno', 'dresden'], ['lipsk', 'leipzig'], ['frankfurt nad menem', 'frankfurt am main'],
+  ['genewa', 'geneva'], ['zurych', 'zurich'], ['bazylea', 'basel'], ['stambul', 'istanbul'], ['kair', 'cairo'],
+  ['dubaj', 'dubai'], ['lwow', 'lviv'], ['belgrad', 'belgrade'], ['zagrzeb', 'zagreb'], ['lublana', 'ljubljana'],
+  ['bratyslawa', 'bratislava'], ['minsk', 'minsk'], ['sewilla', 'sevilla'], ['walencja', 'valencia'],
+  ['marsylia', 'marseille'], ['nicea', 'nice'], ['strasburg', 'strasbourg'], ['tuluza', 'toulouse'],
+  ['haga', 'the hague'], ['antwerpia', 'antwerpen'], ['luksemburg', 'luxembourg'], ['edynburg', 'edinburgh'],
+  ['rejkiawik', 'reykjavik'], ['meksyk', 'mexico city'], ['waszyngton', 'washington, d.c.'], ['seul', 'seoul'],
+  ['jerozolima', 'jerusalem'], ['tbilisi', 'tbilisi'], ['erywan', 'yerevan'], ['teheran', 'tehran'],
+  ['bagdad', 'baghdad'], ['delhi', 'delhi'], ['bombaj', 'mumbai'], ['szanghaj', 'shanghai'],
+  ['kapsztad', 'cape town'], ['hawana', 'havana'], ['petersburg', 'saint petersburg'],
+  ['krolewiec', 'kaliningrad'], ['wladywostok', 'vladivostok'], ['gandawa', 'gent'], ['brugia', 'brugge'],
 ]
 
 /** Cities whose name starts with the query come first, then those that contain it; largest first within each. */
