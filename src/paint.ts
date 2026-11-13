@@ -30,19 +30,22 @@ export interface Overlay {
   pulses: Pulse[]
 }
 
-const SEA_TOP = '#DCE3F6'
-const SEA_BOTTOM = '#C2CDEF'
-const LAND = '#FFFFFF'
-const BORDER = '#AEB8D8'
-const INK = '#151A33'
+const SEA_TOP = '#4159F2'
+const SEA_BOTTOM = '#2337C6'
+const LAND = '#F8F4EA'
+const BORDER = '#CBC3B0'
+const INK = '#141833'
 const RAD = Math.PI / 180
 
 // Countries too small to see as a filled shape get a dot when marked.
 export const DOT_BELOW_KM2 = 2500
 
 /** Projection scale at zoom 1: the globe's radius, or the flat map fitted to the stage. */
-export const baseScale = (mode: MapMode, w: number, h: number) =>
-  mode === 'globe' ? (Math.min(w, h) / 2) * 0.86 : Math.min(w / 5.7, h / 3.1)
+export const baseScale = (mode: MapMode, w: number, h: number) => {
+  // leave room for the controls that float above and below the map
+  const free = Math.max(h - 120, h * 0.6)
+  return mode === 'globe' ? (Math.min(w, free) / 2) * 0.92 : Math.min(w / 5.7, free / 2.9)
+}
 
 // The flat map at scale 1 around the origin. It never rotates, so every shape
 // can be projected once and then only moved and scaled.
@@ -240,10 +243,10 @@ function shadeGlobe(ctx: CanvasRenderingContext2D, w: number, h: number, scale: 
   const cx = w / 2
   const cy = h / 2
   const light = ctx.createRadialGradient(cx - scale * 0.32, cy - scale * 0.38, scale * 0.1, cx, cy, scale * 1.02)
-  light.addColorStop(0, 'rgba(255, 255, 255, 0.2)')
-  light.addColorStop(0.55, 'rgba(255, 255, 255, 0)')
-  light.addColorStop(0.86, 'rgba(40, 52, 130, 0.07)')
-  light.addColorStop(1, 'rgba(40, 52, 130, 0.22)')
+  light.addColorStop(0, 'rgba(255, 255, 255, 0.16)')
+  light.addColorStop(0.5, 'rgba(255, 255, 255, 0)')
+  light.addColorStop(0.84, 'rgba(12, 18, 70, 0.1)')
+  light.addColorStop(1, 'rgba(12, 18, 70, 0.36)')
   ctx.fillStyle = light
   ctx.fill(region, 'evenodd')
 }
@@ -255,8 +258,8 @@ function fillShapes(ctx: CanvasRenderingContext2D, path: Path2D, status: Status 
     ctx.fillStyle = wishHatch(ctx) ?? LAND
     ctx.fill(path, 'evenodd')
   }
-  ctx.strokeStyle = status ? 'rgba(255, 255, 255, 0.7)' : BORDER
-  ctx.lineWidth = status ? 0.9 : 0.6
+  ctx.strokeStyle = status ? 'rgba(255, 255, 255, 0.85)' : BORDER
+  ctx.lineWidth = status ? 1 : 0.6
   ctx.lineJoin = 'round'
   ctx.stroke(path)
 }
@@ -277,8 +280,8 @@ export function paintMap(ctx: CanvasRenderingContext2D, w: number, h: number, sc
     const cx = w / 2
     const cy = h / 2 + scale * 0.05
     const glow = ctx.createRadialGradient(cx, cy, scale * 0.92, cx, cy, scale * 1.14)
-    glow.addColorStop(0, 'rgba(47, 69, 224, 0.2)')
-    glow.addColorStop(1, 'rgba(47, 69, 224, 0)')
+    glow.addColorStop(0, 'rgba(35, 55, 198, 0.34)')
+    glow.addColorStop(1, 'rgba(35, 55, 198, 0)')
     ctx.fillStyle = glow
     ctx.beginPath()
     ctx.arc(cx, cy, scale * 1.14, 0, Math.PI * 2)
@@ -291,7 +294,7 @@ export function paintMap(ctx: CanvasRenderingContext2D, w: number, h: number, sc
   ctx.fillStyle = sea
   ctx.fill(decor.outline)
 
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+  ctx.strokeStyle = 'rgba(255,255,255,0.13)'
   ctx.lineWidth = 1
   ctx.stroke(decor.graticule)
 
@@ -348,8 +351,8 @@ function paintMarkers(ctx: CanvasRenderingContext2D, w: number, h: number, scene
   }
 
   // rim
-  ctx.strokeStyle = 'rgba(255,255,255,0.9)'
-  ctx.lineWidth = 2
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)'
+  ctx.lineWidth = 1.5
   ctx.stroke(outline)
 }
 
@@ -384,7 +387,7 @@ export function paintOverlay(ctx: CanvasRenderingContext2D, w: number, h: number
 
   if (hover && layer) {
     const path = makeTracer(mode, w, h, view)(layer.shapes.filter((s) => s.a2 === hover))
-    ctx.fillStyle = 'rgba(21, 26, 51, 0.14)'
+    ctx.fillStyle = 'rgba(20, 24, 51, 0.16)'
     ctx.fill(path, 'evenodd')
     ctx.strokeStyle = INK
     ctx.lineWidth = 1.4

@@ -13,11 +13,11 @@ export async function downloadPoster(globe: HTMLCanvasElement, stats: Stats, lan
   canvas.height = H
   const ctx = canvas.getContext('2d')!
 
-  ctx.fillStyle = '#EEF0F7'
+  ctx.fillStyle = '#F1F2F7'
   ctx.fillRect(0, 0, W, H)
   ctx.drawImage(globe, 0, 150, W, W)
 
-  ctx.fillStyle = '#151A33'
+  ctx.fillStyle = '#141833'
   ctx.textBaseline = 'alphabetic'
   ctx.font = '700 44px Unbounded, sans-serif'
   ctx.fillText('been map', 110, 150)
@@ -28,7 +28,7 @@ export async function downloadPoster(globe: HTMLCanvasElement, stats: Stats, lan
   const after = 104 + ctx.measureText(count).width + 36
   ctx.font = '500 52px Onest, sans-serif'
   ctx.fillText(t.countries(stats.been), after, H - 262)
-  ctx.fillStyle = '#5B6282'
+  ctx.fillStyle = '#5D6485'
   ctx.fillText(t.landShare(landShareLabel(stats.landShare)), after, H - 194)
 
   ctx.font = '500 30px Onest, sans-serif'
@@ -39,7 +39,7 @@ export async function downloadPoster(globe: HTMLCanvasElement, stats: Stats, lan
     ctx.beginPath()
     ctx.arc(x + 12, H - 102, 12, 0, Math.PI * 2)
     ctx.fill()
-    ctx.fillStyle = '#151A33'
+    ctx.fillStyle = '#141833'
     ctx.fillText(label, x + 36, H - 92)
     x += ctx.measureText(label).width + 78
   }
