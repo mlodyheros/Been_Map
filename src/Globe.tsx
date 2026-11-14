@@ -256,10 +256,24 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
     const tip = tipRef.current!
     const ctx = canvas.getContext('2d')!
     let disposed = false
-    state.backdrop = createBackdrop(photoRef.current!, () => {
+    const photo = photoRef.current!
+    const makeBackdrop = () =>
+      createBackdrop(photo, () => {
+        state.backdropKey = ''
+        state.request()
+      })
+    state.backdrop = makeBackdrop()
+    // Phones (iOS Safari in particular) drop the graphics context when memory
+    // runs short; without this the picture under the map would stay blank.
+    const lost = (e: Event) => e.preventDefault()
+    const restored = () => {
+      state.backdrop = makeBackdrop()
       state.backdropKey = ''
+      sharpen.reset()
       state.request()
-    })
+    }
+    photo.addEventListener('webglcontextlost', lost)
+    photo.addEventListener('webglcontextrestored', restored)
     const sharpen = createDetailLoader((detail) => {
       if (disposed) return
       state.backdrop?.setDetail(detail)
@@ -284,7 +298,10 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
         view.zoom = from.zoom + (to.zoom - from.zoom) * e
         if (t < 1) animating = true
         else state.fly = null
-      } else if (Math.abs(state.velocity.lng) + Math.abs(state.velocity.lat) > 0.02) {
+      } else if (
+        // still moving by more than a fraction of a pixel a frame
+        (Math.abs(state.velocity.lng) + Math.abs(state.velocity.lat)) * baseScale(state.mode, size.w, size.h) * view.zoom > 15
+      ) {
         view.lng = wrapLng(view.lng + state.velocity.lng, state.mode)
         view.lat = clamp(view.lat + state.velocity.lat, -85, 85)
         state.velocity.lng *= 0.93
@@ -301,8 +318,12 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
       for (const p of state.pulses) p.t = (now - p.start) / 600
 
       const moving = animating || state.moving
-      if (state.probe && !moving) probeHover()
-      state.probe = null
+      // a hover lookup waits while the map moves rather than being dropped, so the
+      // outline never stays behind on a country the pointer has already left
+      if (state.probe && !moving) {
+        probeHover()
+        state.probe = null
+      }
 
       const layer = state.world ? levelFor(state.world, view.zoom) : null
       const dpr = Math.min(devicePixelRatio || 1, 2)
@@ -511,10 +532,11 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
       }
 
       pointers.set(e.pointerId, { x, y })
-      state.moving = true
-      clearTimeout(state.settle)
+      if (e.pointerType === 'mouse') state.probe = [x, y]
 
       if (pointers.size === 2) {
+        state.moving = true
+        clearTimeout(state.settle)
         const [a, b] = [...pointers.values()]
         const d = Math.hypot(a.x - b.x, a.y - b.y)
         if (pinch) zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinch)
@@ -526,6 +548,8 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
         travelled += Math.abs(dx) + Math.abs(dy)
         if (travelled > (e.pointerType === 'mouse' ? 4 : 10)) {
           dragging = true
+          state.moving = true
+          clearTimeout(state.settle)
           const scale = baseScale(state.mode, state.size.w, state.size.h) * state.view.zoom
           const k = 57.3 / scale
           if (state.mode === 'flat') {
@@ -537,8 +561,9 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
             state.view.lng = state.view.lng - dx * k
             state.view.lat = clamp(state.view.lat + dy * k, -85, 85)
           }
-          // capped so one large jump between events can't spin the globe wildly
-          state.velocity = { lng: clamp(-dx * k, -4, 4), lat: clamp(dy * k, -4, 4) }
+          // capped in pixels, so one large jump between events can't fling the map
+          // wildly; a cap in degrees would let a close-up view fly off a whole country
+          state.velocity = { lng: -clamp(dx, -36, 36) * k, lat: clamp(dy, -36, 36) * k }
           lastMove = performance.now()
           state.hover = null
           state.hoverRegion = null
@@ -555,8 +580,10 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
       if (pointers.size) return
       canvas.style.cursor = 'grab'
 
+      const [x, y] = local(e)
+      // look again at what is under the mouse once the button is let go
+      if (e.pointerType === 'mouse') state.probe = [x, y]
       if (!dragging && e.type === 'pointerup') {
-        const [x, y] = local(e)
         const hit = pick(x, y)
         const color = hit && state.onPick(hit)
         if (hit && color && !reducedMotion()) {
@@ -598,6 +625,8 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
 
     return () => {
       disposed = true
+      photo.removeEventListener('webglcontextlost', lost)
+      photo.removeEventListener('webglcontextrestored', restored)
       resize.disconnect()
       cancelAnimationFrame(state.frame)
       state.frame = 0

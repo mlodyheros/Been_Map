@@ -212,7 +212,8 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [account, setAccount] = useState<AccountInfo | null>(null)
-  const [page, setPage] = useState<Page>('map')
+  // (in development a simulator can be opened straight on the dashboard, see main.tsx)
+  const [page, setPage] = useState<Page>(() => (import.meta.env.DEV && localStorage.getItem('dev:page') === '"hub"' ? 'hub' : 'map'))
   const [sharing, setSharing] = useState(false)
   /** The full list of achievements is open in the dashboard. */
   const [badges, setBadges] = useState(false)
@@ -1146,7 +1147,7 @@ export default function App() {
             />
           )}
           <div className="hub-grid" hidden={badges}>
-            <div className="hub-column">
+            <div className="hub-column hub-main">
               <section className="card">
                 <header className="panel-title">{title}</header>
                 {tally}
@@ -1159,14 +1160,9 @@ export default function App() {
                 input={{ statuses: shown.statuses, people: shown.people, stats, extras: shownExtras }}
                 onOpen={() => setBadges(true)}
               />
-              {viewing?.kind !== 'shared' && (
-                <Places lang={lang} pins={shownExtras.pins} editable={!viewing} onShow={showPin} onRemove={togglePin} />
-              )}
-              {viewing?.kind !== 'shared' && <RegionProgress lang={lang} extras={shownExtras} onOpen={openDetails} />}
-              {!viewing && <Timeline lang={lang} extras={extras} onOpen={openDetails} />}
               <section className="card options">
                 <h2 className="card-title">{t.options}</h2>
-                <div className="option">
+                <div className="option option-short">
                   <span>{t.viewLabel}</span>
                   {modeSwitch}
                 </div>
@@ -1174,7 +1170,7 @@ export default function App() {
                   <span>{t.styleLabel}</span>
                   {styleSwitch}
                 </div>
-                <div className="option">
+                <div className="option option-short">
                   <span>{t.language}</span>
                   <div className="switch" role="radiogroup" aria-label={t.language}>
                     {LANGS.map((l) => (
@@ -1203,9 +1199,16 @@ export default function App() {
               <div className="list">{rows}</div>
             </section>
 
-            <section className="card">
-              <Account lang={lang} account={account} onViewFriend={viewFriend} onOpenShared={openShared} />
-            </section>
+            <div className="hub-column hub-side">
+              <section className="card">
+                <Account lang={lang} account={account} onViewFriend={viewFriend} onOpenShared={openShared} />
+              </section>
+              {viewing?.kind !== 'shared' && (
+                <Places lang={lang} pins={shownExtras.pins} editable={!viewing} onShow={showPin} onRemove={togglePin} />
+              )}
+              {viewing?.kind !== 'shared' && <RegionProgress lang={lang} extras={shownExtras} onOpen={openDetails} />}
+              {!viewing && <Timeline lang={lang} extras={extras} onOpen={openDetails} />}
+            </div>
           </div>
         </div>
       )}

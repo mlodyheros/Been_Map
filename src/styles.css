@@ -215,6 +215,10 @@ button {
   padding: 4px;
 }
 
+.switch button svg {
+  flex: none;
+}
+
 .switch button {
   display: inline-flex;
   align-items: center;
@@ -1000,7 +1004,7 @@ button {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr) minmax(300px, 400px);
+  grid-template-columns: minmax(340px, 400px) minmax(0, 1fr) minmax(320px, 400px);
   grid-auto-rows: minmax(0, 1fr);
   gap: 16px;
   padding: 16px;
@@ -1059,16 +1063,31 @@ button {
 }
 
 .option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  display: grid;
+  gap: 8px;
   font-weight: 500;
+}
+
+/* short choices sit beside their label; the four map looks get a row of their own */
+.option-short {
+  grid-template-columns: 1fr auto;
+  align-items: center;
 }
 
 .option .switch {
   background: var(--fog);
   box-shadow: none;
+}
+
+.option:not(.option-short) .switch {
+  height: auto;
+}
+
+.option:not(.option-short) .switch button {
+  flex: 1;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 6px;
 }
 
 .options .primary {
@@ -1360,10 +1379,8 @@ select.chip {
 
 .badge-text small {
   font-size: 12px;
+  line-height: 1.35;
   color: var(--ink-soft);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .badge-text .bar {
@@ -1710,13 +1727,49 @@ select.chip {
   }
 }
 
-@media (max-width: 1250px) {
+@media (max-width: 1250px) and (min-width: 901px) {
+  /* two columns; the page scrolls as a whole and the country list stays in view beside it */
+  .hub {
+    overflow-y: auto;
+  }
+
   .hub-grid {
-    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    flex: none;
+    grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+    grid-auto-rows: auto;
+    align-items: start;
   }
 
   .hub-column {
-    grid-row: span 2;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+  }
+
+  .hub-main {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .hub-side {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .hub .card {
+    overflow: visible;
+  }
+
+  .countries {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    position: sticky;
+    top: 16px;
+    height: calc(100dvh - 96px);
+  }
+
+  .hub .countries {
+    overflow: hidden;
   }
 }
 
@@ -2268,7 +2321,6 @@ select.chip {
 }
 
 .badge-summary em {
-  flex: none;
   font-size: 13px;
   font-style: normal;
   font-weight: 600;
@@ -2451,7 +2503,10 @@ select.chip {
   margin: 0;
 }
 
-/* on the full page there is room for the whole description */
-.badge-page .badge-text small {
-  white-space: normal;
+/* on a phone the panel is the bottom sheet and has no button to bring it back, so it never stays hidden */
+@media (max-width: 900px) {
+  .app[data-panel='closed'] .panel {
+    opacity: 1;
+    visibility: visible;
+  }
 }

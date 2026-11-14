@@ -33,7 +33,8 @@ uniform float heightLod;
 out vec4 colour;
 
 const float PI = 3.141592653589793;
-const float FLAT_GREY = 0.675; // what level ground looks like in the relief imagery
+const float FLAT_GREY = 0.565; // level ground in the relief imagery (144 of 255)
+const float WATER_GREY = 0.345; // the sea and lakes there are one flat grey (88 of 255)
 
 // from "right, up, towards the viewer" to a direction on the Earth
 vec3 toEarth(vec3 v) {
@@ -188,37 +189,52 @@ void main() {
       }
       if (hasRelief) {
         vec4 t = textureGrad(closeRelief, q, vec2(du.x, dv.x) * k, vec2(du.y, dv.y) * k);
+        // one channel only; 0 marks a tile that has not arrived (the imagery itself never goes that dark)
         relief = t.r;
-        reliefShare = t.a * edge.x * edge.y;
+        reliefShare = step(0.03, t.r) * edge.x * edge.y;
       }
     }
   }
 
   // how the ground is lit: from the fine relief where there is some, else from the height map
   float coarse = hasHeights ? hillshade(lng, lat) : 1.0;
-  float water = smoothstep(0.44, 0.36, relief) * reliefShare;
-  float fine = clamp(relief / FLAT_GREY, 0.55, 1.45);
+  float ground = hasHeights ? heightOf(vec3(around / sqrt(size) * cos(lat), sin(lat))) : 0.0;
+  // water is exactly one grey; a shaded slope can be just as dark, but slopes are not near sea level
+  float water = (1.0 - smoothstep(0.012, 0.03, abs(relief - WATER_GREY))) * (1.0 - smoothstep(0.28, 0.36, ground)) * reliefShare;
+  // the fine relief, its contrast raised a little: on its own it is a gentle grey
+  float fine = clamp(1.0 + (relief / FLAT_GREY - 1.0) * 1.35, 0.4, 1.7);
   float shade = mix(coarse, mix(fine, 1.0, water), reliefShare);
 
   if (kind == 1) {
     c = mix(c, sharp, sharpness);
     // a little more colour than the photo has, and the relief picked out
     c = mix(vec3(dot(c, vec3(0.3, 0.59, 0.11))), c, 1.18);
-    c *= mix(1.0, shade, 0.6);
+    // dark forest takes shading poorly: light slopes are also lifted, not only shadows deepened
+    // light slopes are lifted and shadows deepened by a fixed amount as well, or dark forest would hardly change
+    c = c * mix(1.0, shade, 0.8) + vec3(0.13, 0.12, 0.10) * (shade - 1.0);
     c *= mix(0.55, 1.0, pow(depth, 0.45));
     c += vec3(0.25, 0.42, 0.75) * pow(1.0 - depth, 4.0) * 0.6;
   } else if (kind == 2) {
-    // the sharper night image has paler ground than the bundled one; bring the two together
-    c = mix(c * 1.5, sharp * vec3(0.72, 0.76, 0.86), sharpness);
-    // city lights are warm, the ground is blue: separate them and let the lights glow
-    float glow = max(c.r - 0.72 * c.b, 0.0) * mix(1.0, 1.3, sharpness);
-    vec3 ground = c * mix(0.75, 1.0, smoothstep(0.0, 0.25, glow)) * mix(1.0, shade, 0.7);
-    c = ground + vec3(1.0, 0.78, 0.50) * (glow * 0.55 + glow * glow * 0.7);
+    // How lit each spot is, 0…1, read from the red channel: the ground in both
+    // pictures is a dark blue with almost no red, the lights are warm. (The bundled
+    // image's lights are dimmer and greyer than the sharp tiles', hence two scales.)
+    float litWorld = smoothstep(0.0, 0.2, c.r - 0.25 * c.b); // its ground is blue with a trace of red; its lights grey
+    // (the faint haze round cities in the sharp tiles stays dark, or whole regions turn to fog)
+    float litClose = smoothstep(0.24, 1.0, sharp.r);
+    // (the close tiles saturate over big cities, so their middle tones are pressed down harder)
+    float lit = mix(pow(litWorld, 0.9), pow(litClose, 1.8), sharpness);
+    // the dark ground, with the light spots of the bundled image taken out of it
+    // (where the sharp tiles are in, their own dark ground is used: the bundled one is coarse there)
+    vec3 night = vec3(0.035, 0.055, 0.12);
+    vec3 ground = mix(mix(c * 1.1, night, litWorld), mix(sharp * vec3(0.8, 0.95, 1.05), night, litClose), sharpness);
+    ground *= mix(1.0, shade, 0.35);
+    // dim lights glow orange, the brightest city centres turn a warm white
+    vec3 light = mix(vec3(1.0, 0.58, 0.24), vec3(1.0, 0.87, 0.62), smoothstep(0.3, 1.0, lit));
+    c = ground * (1.0 - 0.7 * lit) + light * (lit * 0.85 + lit * lit * 0.15);
     c += vec3(0.004, 0.008, 0.024);
     c += vec3(0.10, 0.22, 0.55) * pow(1.0 - depth, 3.0);
   } else {
-    float h = hasHeights ? heightOf(vec3(around / sqrt(size) * cos(lat), sin(lat))) : 0.0;
-    c = heightColour(h, lat) * mix(1.0, shade, 0.85);
+    c = heightColour(ground, lat) * mix(1.0, shade, 0.85);
     c = mix(c, vec3(0.80, 0.88, 0.96), water);
   }
   colour = vec4(clamp(c, 0.0, 1.0) * cover, cover);
@@ -310,10 +326,17 @@ export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): B
   const UNIT = { image: 0, close: 1, closeRelief: 2, heights: 3 }
   for (const [name, unit] of Object.entries(UNIT)) gl.uniform1i(at(name), unit)
 
-  const upload = (texture: WebGLTexture, unit: number, source: TexImageSource, format: number, repeat: boolean) => {
+  const upload = (
+    texture: WebGLTexture,
+    unit: number,
+    source: TexImageSource,
+    format: number,
+    repeat: boolean,
+    internal: number = format,
+  ) => {
     gl.activeTexture(gl.TEXTURE0 + unit)
     gl.bindTexture(gl.TEXTURE_2D, texture)
-    gl.texImage2D(gl.TEXTURE_2D, 0, format, format, gl.UNSIGNED_BYTE, source)
+    gl.texImage2D(gl.TEXTURE_2D, 0, internal, format, gl.UNSIGNED_BYTE, source)
     gl.generateMipmap(gl.TEXTURE_2D)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
@@ -363,7 +386,8 @@ export function createBackdrop(canvas: HTMLCanvasElement, onLoad: () => void): B
     setDetail(next) {
       detail = next
       if (next?.image) upload(closeTexture, UNIT.close, next.image, gl.RGBA, false)
-      if (next?.relief) upload(reliefTexture, UNIT.closeRelief, next.relief, gl.RGBA, false)
+      // the relief is grey: one channel takes a quarter of the memory, which phones need
+      if (next?.relief) upload(reliefTexture, UNIT.closeRelief, next.relief, gl.RED, false, gl.R8)
     },
     draw(style, mode, width, height, scale, view) {
       if (canvas.width !== width || canvas.height !== height) {
