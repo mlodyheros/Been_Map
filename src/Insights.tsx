@@ -79,8 +79,8 @@ export function Achievements({ lang, input, onOpen }: { lang: Lang; input: Input
         <span>
           <strong>{t.count(earned.length, rows.length)}</strong>
           <small>{earned.slice(-8).map((r) => r.a.icon).join(' ') || t.next}</small>
+          <em>{t.all} ›</em>
         </span>
-        <em>{t.all} ›</em>
       </button>
       {next.length > 0 && (
         <>

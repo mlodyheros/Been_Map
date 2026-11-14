@@ -23,6 +23,14 @@ class Safety extends Component<{ children: ReactNode }, { broken: boolean }> {
   }
 }
 
+// Development only: #dev=<json> writes saved state before the app starts, so a
+// device that can't be tapped (a simulator) can still be shown a given screen.
+if (import.meta.env.DEV && location.hash.startsWith('#dev=')) {
+  const state = JSON.parse(decodeURIComponent(location.hash.slice(5))) as Record<string, unknown>
+  for (const [key, value] of Object.entries(state)) localStorage.setItem(key, JSON.stringify(value))
+  history.replaceState(null, '', location.pathname + location.search)
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Safety>
