@@ -244,6 +244,9 @@ if (repeated.length) throw new Error(`repeated region codes: ${repeated.join(', 
 
 writeFileSync(new URL('../public/regions.json', import.meta.url), JSON.stringify(slim))
 writeFileSync(new URL('../src/data/region-countries.json', import.meta.url), JSON.stringify(countries))
+// how many regions each country has, for progress and achievements without loading the shapes
+const counts = Object.fromEntries(countries.map((a2) => [a2, features.filter((f) => f.properties.a2 === a2).length]))
+writeFileSync(new URL('../src/data/region-counts.json', import.meta.url), JSON.stringify(counts))
 console.log(`${features.length} regions in ${countries.length} countries; ${anchored} pieces of land kept whole around big cities`)
 if (empty.length) console.log(`lost in simplification: ${empty.join(', ')}`)
 if (inverted.length) console.log(`inside-out after simplification (repaired when loaded): ${inverted.join(', ')}`)

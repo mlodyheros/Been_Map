@@ -1,12 +1,13 @@
 // Builds public/cities.json for the place search and for naming pins dropped
-// on the map: every town of 15,000 people or more, and in Poland from 5,000.
+// on the map: every town of 5,000 people or more (in Poland from 1,000), plus
+// every capital and regional seat however small.
 // Rows are [name, country code, latitude, longitude, population in thousands].
 import { createRequire } from 'node:module'
 import { writeFileSync } from 'node:fs'
 
 const cities = createRequire(import.meta.url)('all-the-cities')
 const rows = cities
-  .filter((c) => c.population >= (c.country === 'PL' ? 5_000 : 15_000))
+  .filter((c) => c.population >= (c.country === 'PL' ? 1_000 : 5_000) || c.featureCode === 'PPLC' || c.featureCode === 'PPLA')
   .sort((a, b) => b.population - a.population)
   .map((c) => [
     c.name,

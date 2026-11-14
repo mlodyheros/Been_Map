@@ -13,7 +13,7 @@ export interface City {
 
 let pending: Promise<City[]> | null = null
 
-/** Every city of 50,000 people or more, largest first. Fetched once, on first use. */
+/** Towns and cities, largest first (see scripts/build-cities.mjs). Fetched once, on first use. */
 export function loadCities(): Promise<City[]> {
   pending ??= fetch('cities.json')
     .then((r) => r.json())
