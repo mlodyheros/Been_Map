@@ -144,6 +144,8 @@ void main() {
     if (!hit) outside = true;
     vec3 surface = vec3(p, z);
     vec3 earth = toEarth(surface / max(length(surface), 1e-6));
+    // past the edge of the globe only real mountains show; ground a pixel or two tall would look like specks
+    if (r2 >= 1.0 && bulge * rise(earth) * scale < 2.5) outside = true;
     depth = clamp(z, 0.0, 1.0);
     lat = asin(clamp(earth.z, -1.0, 1.0));
     around = earth.xy;

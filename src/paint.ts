@@ -263,6 +263,14 @@ function fillShapes(ctx: CanvasRenderingContext2D, path: Path2D, fill: Fill, sty
     ctx.fillStyle = LAND
     ctx.fill(path, 'evenodd')
   }
+  if (fill.color && fill.faint && photo) {
+    // a tint over a tint turns to mud: a country marked only in part keeps its picture and gets a coloured outline
+    ctx.strokeStyle = fill.color
+    ctx.lineWidth = 1.6
+    ctx.lineJoin = 'round'
+    ctx.stroke(path)
+    return
+  }
   if (fill.color) {
     // over a photo the marking is a tint, so the terrain and city lights stay visible
     ctx.globalAlpha = (photo ? 0.62 : 1) * (fill.faint ? 0.38 : 1)

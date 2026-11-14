@@ -1,4 +1,6 @@
+import type { Category } from './achievements'
 import type { CloudErrorCode } from './cloud'
+import type { Transport } from './extras'
 import type { ContinentId, Country, MapStyle, Status } from './model'
 
 export type Lang = 'pl' | 'en'
@@ -59,15 +61,43 @@ interface Strings {
     toggle: string
     title: string
     loading: string
+    all: string
+    none: string
+    empty: string
   }
   details: {
     open(country: string): string
     when: string
     note: string
     notePlaceholder: string
+    trips: string
+    trip(n: number): string
+    addTrip: string
+    removeTrip: string
+    transport: string
+    transports: Record<Transport, string>
+    photos(n: number, max: number): string
+    addPhoto: string
+    photoFailed: string
+    photosHere: string
+    photoMissing(n: number): string
+    forgetPhotos: string
+    removePhoto: string
+    close: string
+    regionsDone(n: number, total: number): string
   }
   timeline: { title: string; empty: string; undated: string }
-  achievements: { title: string; unlocked(name: string): string; count(n: number, total: number): string }
+  achievements: {
+    title: string
+    unlocked(name: string): string
+    count(n: number, total: number): string
+    all: string
+    back: string
+    earned: string
+    next: string
+    done: string
+    categories: Record<Category, string>
+  }
   compare: { toggle: string; me: string; them(name: string): string; both: string }
   search: string
   filters: { all: string; marked: string; wish: string }
@@ -223,12 +253,39 @@ const pl: Strings = {
     toggle: 'Regiony',
     title: 'Regiony',
     loading: 'Wczytuję regiony…',
+    all: 'Zaznacz wszystkie',
+    none: 'Wyczyść',
+    empty: 'Włącz „Regiony” na mapie i klikaj województwa, stany czy prowincje — tutaj zobaczysz, ile każdego kraju już znasz.',
   },
   details: {
     open: (country) => `Szczegóły: ${country}`,
     when: 'Kiedy',
     note: 'Notatka',
     notePlaceholder: 'Z kim, co warto zapamiętać…',
+    trips: 'Wyprawy',
+    trip: (n) => `Wyprawa ${n}`,
+    addTrip: '+ Dodaj wyprawę',
+    removeTrip: 'Usuń wyprawę',
+    transport: 'Transport',
+    transports: {
+      plane: 'Samolot',
+      car: 'Samochód',
+      train: 'Pociąg',
+      bus: 'Autobus',
+      ship: 'Statek',
+      bike: 'Rower',
+      moto: 'Motocykl',
+      foot: 'Pieszo',
+    },
+    photos: (n, max) => `Zdjęcia ${n}/${max}`,
+    addPhoto: 'Dodaj zdjęcia',
+    photoFailed: 'Nie udało się wczytać zdjęcia',
+    photosHere: 'Zdjęcia są zapisywane tylko na tym urządzeniu.',
+    photoMissing: (n) => `${n} ${n === 1 ? 'zdjęcie jest' : 'zdjęć jest'} na innym urządzeniu`,
+    removePhoto: 'Usuń zdjęcie',
+    forgetPhotos: 'Usuń z listy',
+    close: 'Zamknij',
+    regionsDone: (n, total) => `${n}/${total} · ${Math.round((n / total) * 100)}%`,
   },
   timeline: {
     title: 'Oś czasu',
@@ -239,6 +296,19 @@ const pl: Strings = {
     title: 'Osiągnięcia',
     unlocked: (name) => `🏆 Osiągnięcie: ${name}`,
     count: (n, total) => `${n} z ${total}`,
+    all: 'Zobacz wszystkie',
+    back: 'Wróć do panelu',
+    earned: 'zdobytych',
+    next: 'Najbliżej zdobycia',
+    done: 'Zdobyte',
+    categories: {
+      countries: 'Kraje',
+      world: 'Kontynenty i świat',
+      areas: 'Części świata',
+      kinds: 'Inne oznaczenia',
+      places: 'Miejsca i regiony',
+      trips: 'Wyprawy',
+    },
   },
   compare: {
     toggle: 'Porównaj ze mną',
@@ -404,12 +474,39 @@ const en: Strings = {
     toggle: 'Regions',
     title: 'Regions',
     loading: 'Loading regions…',
+    all: 'Mark all',
+    none: 'Clear',
+    empty: 'Switch on “Regions” on the map and tap states or provinces — this shows how much of each country you know.',
   },
   details: {
     open: (country) => `Details: ${country}`,
     when: 'When',
     note: 'Note',
     notePlaceholder: 'Who with, what to remember…',
+    trips: 'Trips',
+    trip: (n) => `Trip ${n}`,
+    addTrip: '+ Add a trip',
+    removeTrip: 'Remove trip',
+    transport: 'Transport',
+    transports: {
+      plane: 'Plane',
+      car: 'Car',
+      train: 'Train',
+      bus: 'Bus',
+      ship: 'Ship',
+      bike: 'Bike',
+      moto: 'Motorbike',
+      foot: 'On foot',
+    },
+    photos: (n, max) => `Photos ${n}/${max}`,
+    addPhoto: 'Add photos',
+    photoFailed: 'Could not read the photo',
+    photosHere: 'Photos are kept on this device only.',
+    photoMissing: (n) => `${n} ${n === 1 ? 'photo is' : 'photos are'} on another device`,
+    removePhoto: 'Remove photo',
+    forgetPhotos: 'Drop from the list',
+    close: 'Close',
+    regionsDone: (n, total) => `${n}/${total} · ${Math.round((n / total) * 100)}%`,
   },
   timeline: {
     title: 'Timeline',
@@ -420,6 +517,19 @@ const en: Strings = {
     title: 'Achievements',
     unlocked: (name) => `🏆 Achievement: ${name}`,
     count: (n, total) => `${n} of ${total}`,
+    all: 'See all',
+    back: 'Back to the dashboard',
+    earned: 'earned',
+    next: 'Closest to earning',
+    done: 'Earned',
+    categories: {
+      countries: 'Countries',
+      world: 'Continents and the globe',
+      areas: 'Parts of the world',
+      kinds: 'Other markings',
+      places: 'Places and regions',
+      trips: 'Trips',
+    },
   },
   compare: {
     toggle: 'Compare with me',

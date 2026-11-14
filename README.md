@@ -9,7 +9,7 @@ npm run dev
 
 - `npm run build` — sprawdzenie typów i build produkcyjny
 - `npm run countries` — odświeża `src/data/countries.json` z pakietu `world-countries`
-- `npm run cities` — odświeża `public/cities.json` (miasta od 50 tys. mieszkańców) z pakietu `all-the-cities`
+- `npm run cities` — odświeża `public/cities.json` (miejscowości od 5 tys. mieszkańców, w Polsce od 1 tys., oraz wszystkie stolice) z pakietu `all-the-cities`
 - `npm run regions -- ścieżka/ne_10m_admin_1_states_provinces.geojson` — odświeża `public/regions.json` (stany, prowincje, województwa) z warstwy „admin 1” Natural Earth
 
 ## Konta i znajomi

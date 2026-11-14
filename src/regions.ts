@@ -3,12 +3,15 @@ import { geoArea, geoBounds, geoCentroid, geoContains, geoDistance } from 'd3-ge
 import { feature } from 'topojson-client'
 import type { Feature, MultiPolygon, Polygon, Position } from 'geojson'
 import countries from './data/region-countries.json'
+import counts from './data/region-counts.json'
 import type { GeometryCollection, Topology } from 'topojson-specification'
 import type { Shape } from './geo'
 import type { Lang } from './i18n'
 
 /** Countries that can be marked region by region; written by scripts/build-regions.mjs. */
 export const REGION_COUNTRIES = new Set<string>(countries)
+/** How many regions each of those countries has. */
+export const REGION_COUNTS: Record<string, number> = counts
 
 /**
  * d3 reads a ring's direction to tell inside from outside. A ring stored the

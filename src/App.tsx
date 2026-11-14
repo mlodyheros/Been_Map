@@ -26,11 +26,11 @@ import {
   saveExtras,
   saveExtrasSynced,
   type Extras,
-  type Note,
+  type Trip,
   type Pin,
 } from './extras'
 import Globe, { type GlobeHandle, type Hit } from './Globe'
-import { Achievements, Places, Timeline } from './Insights'
+import { Achievements, AchievementsPage, Places, RegionProgress, Timeline } from './Insights'
 import { LANGS, STRINGS, countryName, type Brush } from './i18n'
 import {
   BY_A2,
@@ -199,6 +199,10 @@ const StyleIcon = ({ id }: { id: MapStyle }) => (
 )
 
 const ink = (color: string) => ({ '--status': color }) as React.CSSProperties
+const NO_TRIPS: readonly Trip[] = []
+/** The year of the latest dated trip, for the country's row. */
+const tripYear = (trips: readonly Trip[] | undefined) =>
+  trips?.map((t) => t.date?.slice(0, 4) ?? '').sort().pop() || null
 
 export default function App() {
   const [statuses, setStatuses] = useState<Statuses>(loadStatuses)
@@ -210,6 +214,8 @@ export default function App() {
   const [account, setAccount] = useState<AccountInfo | null>(null)
   const [page, setPage] = useState<Page>('map')
   const [sharing, setSharing] = useState(false)
+  /** The full list of achievements is open in the dashboard. */
+  const [badges, setBadges] = useState(false)
   const [extras, setExtras] = useState(loadExtras)
   /** Taps on the map drop place markers instead of marking countries. */
   const [pinMode, setPinMode] = useState(false)
@@ -368,7 +374,7 @@ export default function App() {
       statuses: map?.statuses ?? {},
       people: map?.people ?? new Set(),
       // a friend's notes are theirs to read
-      extras: { ...(map?.extras ?? EMPTY_EXTRAS), notes: {} },
+      extras: { ...(map?.extras ?? EMPTY_EXTRAS), trips: {} },
     })
     setPage('map')
   }, [])
@@ -537,6 +543,28 @@ export default function App() {
     [commitExtras],
   )
 
+  /** Marks all of a country's regions with the active status, or clears them. */
+  const setRegions = useCallback(
+    (ids: string[], on: boolean) => {
+      const { extras: mine, statuses: own, brush: active, viewing: view } = live.current
+      if (view || !ids.length) return
+      const status: Status = active === 'people' ? 'visited' : active
+      const regions = { ...mine.regions }
+      for (const id of ids) {
+        if (on) regions[id] = status
+        else delete regions[id]
+      }
+      commitExtras({ ...mine, regions })
+      const a2 = ids[0].slice(0, 2)
+      if (on && !own[a2]) {
+        const marks = { ...own, [a2]: status }
+        live.current.statuses = marks
+        setStatuses(marks)
+      }
+    },
+    [commitExtras],
+  )
+
   /** Adds the place, or removes it if it is already marked. */
   const togglePin = useCallback(
     (pin: Pin) => {
@@ -552,12 +580,12 @@ export default function App() {
     [commitExtras],
   )
 
-  const setNote = useCallback(
-    (a2: string, note: Note) => {
-      const notes = { ...live.current.extras.notes }
-      if (note.date || note.text) notes[a2] = note
-      else delete notes[a2]
-      commitExtras({ ...live.current.extras, notes })
+  const setTrips = useCallback(
+    (a2: string, list: Trip[]) => {
+      const trips = { ...live.current.extras.trips }
+      if (list.length) trips[a2] = list
+      else delete trips[a2]
+      commitExtras({ ...live.current.extras, trips })
     },
     [commitExtras],
   )
@@ -609,6 +637,16 @@ export default function App() {
     if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur()
   }
 
+  /** Opens a country's details in the dashboard's list and brings them into view. */
+  const openDetails = (a2: string) => {
+    setQuery('')
+    setFilter('all')
+    setOpen(a2)
+    requestAnimationFrame(() =>
+      document.querySelector('.hub li[data-open]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
+    )
+  }
+
   // everything below draws either your own map or the friend's map being viewed
   const own = { statuses, people }
   const shown = viewing ?? own
@@ -621,7 +659,7 @@ export default function App() {
 
   // a newly earned achievement is announced once, on your own map
   const ownStats = useMemo(() => computeStats(statuses, people), [statuses, people])
-  const earned = useMemo(() => unlocked({ statuses, stats: ownStats, extras }), [statuses, ownStats, extras])
+  const earned = useMemo(() => unlocked({ statuses, people, stats: ownStats, extras }), [statuses, people, ownStats, extras])
   const earnedBefore = useRef(earned)
   useEffect(() => {
     const fresh = earned.filter((id) => !earnedBefore.current.includes(id))
@@ -732,7 +770,7 @@ export default function App() {
   const pages = (
     <nav className="pages" role="tablist">
       {PAGES.map((id) => (
-        <button key={id} role="tab" aria-selected={page === id} onClick={() => setPage(id)}>
+        <button key={id} role="tab" aria-selected={page === id} onClick={() => (setPage(id), setBadges(false))}>
           {t.pages[id]}
         </button>
       ))}
@@ -906,7 +944,7 @@ export default function App() {
                     <span className="row-flag">{flag(c.a2)}</span>
                     <span className="row-label">{name}</span>
                     {knows && <i className="swatch swatch-people" style={ink(PEOPLE_COLOR)} title={t.peopleBadge} />}
-                    {shownExtras.notes[c.a2]?.date && <small className="row-year">{shownExtras.notes[c.a2].date!.slice(0, 4)}</small>}
+                    {tripYear(shownExtras.trips[c.a2]) && <small className="row-year">{tripYear(shownExtras.trips[c.a2])}</small>}
                     {s && (
                       <span className="row-status" style={ink(STATUS_BY_ID[s].color)}>
                         {brush === 'people' && <i className={`swatch swatch-${s}`} />}
@@ -931,11 +969,13 @@ export default function App() {
                       country={c}
                       lang={lang}
                       editable={!viewing}
-                      note={shownExtras.notes[c.a2]}
+                      trips={shownExtras.trips[c.a2] ?? NO_TRIPS}
                       regions={shownExtras.regions}
-                      onNote={(note) => setNote(c.a2, note)}
+                      onTrips={(list) => setTrips(c.a2, list)}
                       onRegion={toggleRegion}
+                      onRegions={setRegions}
                       onShow={() => showOnMap(c.a2)}
+                      onError={(text) => setToast({ id: Date.now(), text, color: null })}
                     />
                   )}
                 </li>
@@ -1098,7 +1138,14 @@ export default function App() {
             <p className="wordmark">been map</p>
             {pages}
           </header>
-          <div className="hub-grid">
+          {badges && (
+            <AchievementsPage
+              lang={lang}
+              input={{ statuses: shown.statuses, people: shown.people, stats, extras: shownExtras }}
+              onBack={() => setBadges(false)}
+            />
+          )}
+          <div className="hub-grid" hidden={badges}>
             <div className="hub-column">
               <section className="card">
                 <header className="panel-title">{title}</header>
@@ -1107,24 +1154,16 @@ export default function App() {
                   {progress}
                 </div>
               </section>
-              <Achievements lang={lang} statuses={shown.statuses} stats={stats} extras={shownExtras} />
+              <Achievements
+                lang={lang}
+                input={{ statuses: shown.statuses, people: shown.people, stats, extras: shownExtras }}
+                onOpen={() => setBadges(true)}
+              />
               {viewing?.kind !== 'shared' && (
                 <Places lang={lang} pins={shownExtras.pins} editable={!viewing} onShow={showPin} onRemove={togglePin} />
               )}
-              {!viewing && (
-                <Timeline
-                  lang={lang}
-                  extras={extras}
-                  onOpen={(a2) => {
-                    setQuery('')
-                    setFilter('all')
-                    setOpen(a2)
-                    requestAnimationFrame(() =>
-                      document.querySelector('.hub li[data-open]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
-                    )
-                  }}
-                />
-              )}
+              {viewing?.kind !== 'shared' && <RegionProgress lang={lang} extras={shownExtras} onOpen={openDetails} />}
+              {!viewing && <Timeline lang={lang} extras={extras} onOpen={openDetails} />}
               <section className="card options">
                 <h2 className="card-title">{t.options}</h2>
                 <div className="option">

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { cleanExtras, type Extras } from './extras'
+import { cleanExtras, storedExtras, type Extras } from './extras'
 import { cleanPeople, cleanStatuses, type Statuses } from './model'
 
 // The publishable key is meant to ship in the browser; row-level security in
@@ -150,7 +150,7 @@ export async function saveMap(userId: string, map: CloudMap) {
     updated_at: new Date().toISOString(),
   }
   if (extrasStored && map.extras) {
-    const { error } = await supabase.from('maps').upsert({ ...row, extras: map.extras })
+    const { error } = await supabase.from('maps').upsert({ ...row, extras: storedExtras(map.extras) })
     if (!error) return
     // an older database has no such column: keep syncing the countries at least
     if (error.code !== 'PGRST204' && !error.message.includes('extras')) fail(error)
