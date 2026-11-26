@@ -1,3 +1,5 @@
+// The account dialog: signing in or up, picking a username, friends, shared
+// maps and the public link.
 import { useCallback, useEffect, useState } from 'react'
 import {
   CloudError,
@@ -32,6 +34,7 @@ interface Props {
   onOpenShared(map: SharedMapInfo): Promise<void>
 }
 
+/** Shows the step the account is at: signed out, signed in without a username, or ready. */
 export default function Account({ lang, account, onViewFriend, onOpenShared }: Props) {
   const t = STRINGS[lang].account
   const explain = (e: unknown) => t.errors[e instanceof CloudError ? e.code : 'unknown']
@@ -122,6 +125,7 @@ function PublicLink({ lang, account, explain }: { lang: Lang; account: AccountIn
   }, [account.id])
 
   const flip = async () => {
+    // flipped at once, and put back if the server refuses
     const next = !on
     setOn(next)
     setNote('')
@@ -163,6 +167,7 @@ function PublicLink({ lang, account, explain }: { lang: Lang; account: AccountIn
   )
 }
 
+/** E-mail and password sign-in or sign-up, plus Google or Apple when the project has them on. */
 function SignIn({ lang, explain }: { lang: Lang; explain(e: unknown): string }) {
   const t = STRINGS[lang].account
   const [mode, setMode] = useState<'logIn' | 'signUp'>('logIn')
@@ -264,6 +269,7 @@ function SignIn({ lang, explain }: { lang: Lang; explain(e: unknown): string }) 
   )
 }
 
+/** The signed-in view: friends and requests, shared maps, and the public link. */
 function Friends({
   lang,
   account,
@@ -447,6 +453,7 @@ function Friends({
       {maps && maps.length === 0 && <p className="dialog-note">{t.noShared}</p>}
       <ul className="people shared">
         {maps?.map((m) => {
+          // friends who are not on this map yet
           const invitable = accepted.filter((f) => !m.members.some((x) => x.userId === f.userId))
           return (
             <li key={m.id}>
@@ -479,6 +486,7 @@ function Friends({
               <button
                 className="chip"
                 disabled={busy}
+                // the creator deletes the map for everyone; anyone else just leaves it
                 onClick={() => act(() => (m.mine ? deleteSharedMap(m.id) : removeSharedMember(m.id, account.id)))}
               >
                 {m.mine ? t.delete : t.leave}

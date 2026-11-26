@@ -1,3 +1,5 @@
+// The details panel under a country in the list: trips with photos, and the
+// country's regions to mark one by one.
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MAX_NOTE, MAX_PHOTOS, MAX_TRIPS, TRANSPORTS, newTripId, tripIsEmpty, type Transport, type Trip } from './extras'
@@ -6,6 +8,7 @@ import { STATUS_BY_ID, isBeen, type Country, type Statuses } from './model'
 import { addPhoto, photoUrl, removePhotos, usePhoto } from './photos'
 import { REGION_COUNTRIES, regionName, useRegions } from './regions'
 
+/** The icon shown for each kind of transport, here and in the timeline. */
 export const TRANSPORT_ICON: Record<Transport, string> = {
   plane: '✈️',
   car: '🚗',
@@ -32,6 +35,7 @@ interface Props {
   onError(text: string): void
 }
 
+/** A photo's thumbnail; nothing at all when this device does not have the photo. */
 function Thumb({ id, label, onOpen }: { id: string; label: string; onOpen(): void }) {
   const url = usePhoto(id)
   if (url === null) return null
@@ -92,6 +96,7 @@ function Viewer({
   )
 }
 
+/** One trip: date, note, transport and photos. */
 function TripCard({
   trip,
   index,
@@ -160,6 +165,7 @@ function TripCard({
     const rest = photos.filter((p) => p !== id)
     onChange({ ...trip, photos: rest.length ? rest : undefined })
     void removePhotos([id])
+    // stay at the same place in the shorter list, or close when none are left
     setViewing(here.length > 1 ? Math.min(at, here.length - 2) : null)
   }
 
@@ -208,6 +214,7 @@ function TripCard({
                 disabled={!editable}
                 title={t.transports[k]}
                 onClick={() => {
+                  // kept in the order of TRANSPORTS, whatever order they were tapped in
                   const next = kinds.includes(k) ? kinds.filter((x) => x !== k) : TRANSPORTS.filter((x) => x === k || kinds.includes(x))
                   onChange({ ...trip, transport: next.length ? next : undefined })
                 }}
@@ -309,11 +316,13 @@ export default function CountryDetails({ country, lang, editable, trips, regions
               index={i}
               lang={lang}
               editable={editable}
+              // a lone blank trip stays: there would be nothing left to type into
               removable={shown.length > 1 || !tripIsEmpty(trip)}
               onChange={(next) => commit(now.current.map((x) => (x.id === trip.id ? next : x)))}
               onRemove={() => {
                 void removePhotos(trip.photos ?? [])
                 const rest = now.current.filter((x) => x.id !== trip.id)
+                // removing the last trip leaves a blank one in its place
                 commit(rest.length ? rest : [{ id: newTripId() }])
               }}
               onError={onError}

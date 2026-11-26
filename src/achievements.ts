@@ -1,3 +1,5 @@
+// The achievements: each one is a name, a hint and a progress function over
+// the map, so earned state is always worked out from the data, never stored.
 import { allTrips, type Extras } from './extras'
 import type { Lang } from './i18n'
 import { BY_A2, COUNTRIES, isBeen, type ContinentId, type Stats, type Statuses } from './model'
@@ -17,6 +19,7 @@ export interface Achievement {
   progress(input: Input): [number, number]
 }
 
+/** Everything an achievement may look at. */
 export interface Input {
   statuses: Statuses
   people: ReadonlySet<string>
@@ -24,9 +27,11 @@ export interface Input {
   extras: Extras
 }
 
+/** Polish plural forms: one, few (2–4, except 12–14), many. */
 const plural = (n: number, one: string, few: string, many: string) =>
   n === 1 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? few : many
 
+/** Visit `n` independent countries. */
 const countries = (n: number, icon: string, pl: string, en: string): Achievement => ({
   id: `countries-${n}`,
   category: 'countries',
@@ -36,6 +41,7 @@ const countries = (n: number, icon: string, pl: string, en: string): Achievement
   progress: ({ stats }) => [stats.been, n],
 })
 
+/** Visit the listed countries, or `needed` of them. */
 const group = (id: string, icon: string, codes: string[], pl: string, en: string, hintPl: string, hintEn: string, needed = codes.length): Achievement => ({
   id,
   category: 'areas',
@@ -45,6 +51,7 @@ const group = (id: string, icon: string, codes: string[], pl: string, en: string
   progress: ({ statuses }) => [codes.filter((a2) => isBeen(statuses[a2])).length, needed],
 })
 
+/** Set foot on `n` continents. */
 const continents = (n: number, icon: string, pl: string, en: string): Achievement => ({
   id: `continents-${n}`,
   category: 'world',
@@ -67,6 +74,7 @@ const within = (cont: ContinentId, share: number, icon: string, pl: string, en: 
   },
 })
 
+/** Visit countries covering `pct` percent of the land; capped so the bar stops at full. */
 const land = (pct: number, icon: string, pl: string, en: string): Achievement => ({
   id: `land-${pct}`,
   category: 'world',
@@ -76,6 +84,7 @@ const land = (pct: number, icon: string, pl: string, en: string): Achievement =>
   progress: ({ stats }) => [Math.min(pct, Math.floor(stats.landShare * 100)), pct],
 })
 
+/** Any other rule, given as its own progress function. */
 const custom = (
   id: string,
   category: Category,
@@ -89,6 +98,7 @@ const custom = (
 
 const beenList = (statuses: Statuses) => Object.keys(statuses).filter((a2) => isBeen(statuses[a2]))
 const count = (statuses: Statuses, status: string) => Object.values(statuses).filter((s) => s === status).length
+// hemispheres go by each country's centre point; west of 25°W is the Americas side
 const SOUTH = new Set(COUNTRIES.filter((c) => c.lat < 0).map((c) => c.a2))
 const WEST = new Set(COUNTRIES.filter((c) => c.lng < -25).map((c) => c.a2))
 
@@ -111,6 +121,7 @@ const photoCount = (n: number, icon: string, pl: string, en: string) =>
     allTrips(extras).reduce((sum, { trip }) => sum + (trip.photos?.length ?? 0), 0),
     n,
   ])
+/** Every kind of transport used on any trip. */
 const kinds = (extras: Extras) => new Set(allTrips(extras).flatMap(({ trip }) => trip.transport ?? []))
 
 export const ACHIEVEMENTS: Achievement[] = [
@@ -255,6 +266,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   photoCount(100, '🎞️', 'Fotoreporter', 'Photojournalist'),
 ]
 
+/** Ids of the achievements earned so far; the app compares them over time to announce new ones. */
 export const unlocked = (input: Input) =>
   ACHIEVEMENTS.filter((a) => {
     const [done, needed] = a.progress(input)

@@ -1,3 +1,4 @@
+// The share dialog: format switch, preview of the card, and send or save.
 import { useEffect, useState } from 'react'
 import { STRINGS, type Lang } from './i18n'
 import { SHARE_FORMATS, canShareFiles, cardFile, downloadCard, type ShareFormat } from './share'
@@ -15,6 +16,8 @@ export default function Share({ lang, render, onClose }: Props) {
   const [format, setFormat] = useState<ShareFormat>('story')
   const [card, setCard] = useState<{ blob: Blob; url: string } | null>(null)
 
+  // redraws on every format change; the previous preview's URL is released, and a
+  // render that finishes after a newer one started is ignored
   useEffect(() => {
     let current = true
     let url = ''

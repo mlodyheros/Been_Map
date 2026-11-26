@@ -184,6 +184,8 @@ const weighted = presimplify(full)
 const SMALL_KM2 = 5000
 const TINY_KM2 = 300
 const R = 6371
+// point[2] is the weight presimplify gave a point (Infinity is never dropped);
+// a negative arc index means that arc reversed, and ~arc is its real index
 const arcsOf = (g) => (g.type === 'Polygon' ? g.arcs.flat() : g.type === 'MultiPolygon' ? g.arcs.flat(2) : [])
 weighted.objects.regions.geometries.forEach((g, i) => {
   const km2 = geoArea(features[i]) * R * R

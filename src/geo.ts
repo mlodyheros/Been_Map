@@ -1,3 +1,5 @@
+// Country outlines for the map: the world atlas at several levels of detail,
+// plus the lookup from a point on the globe to the country under it.
 import { geoBounds, geoCentroid, geoContains, geoDistance } from 'd3-geo'
 import { feature } from 'topojson-client'
 import { presimplify, quantile, simplify } from 'topojson-simplify'
@@ -41,6 +43,7 @@ type Atlas = Topology<{ countries: GeometryCollection<{ name: string }> }>
 const features = (topo: Atlas) =>
   feature(topo, topo.objects.countries).features as Feature<Polygon | MultiPolygon, { name: string }>[]
 
+/** Fetches the atlas and cuts it into the detail levels, tagging each shape with its country code. */
 export async function loadWorld(): Promise<World> {
   const atlas = (await fetch(atlasUrl).then((r) => r.json())) as Atlas
   const weighted = presimplify(atlas)
@@ -60,6 +63,7 @@ export async function loadWorld(): Promise<World> {
       [e, n],
     ]
     const radius = wide ? Math.PI : Math.max(...corners.map((c) => geoDistance(centre, c))) + 0.02
+    // matched by ISO numeric code first, then by name for the few shapes without one
     return { a2: N3_TO_A2.get(String(f.id ?? '')) ?? NAMED[f.properties.name] ?? null, bounds, centre, radius }
   })
 
@@ -70,6 +74,7 @@ export async function loadWorld(): Promise<World> {
   return { levels, detail: levels[levels.length - 1] }
 }
 
+/** The detail level for a zoom: coarse shapes when zoomed out keep drawing fast. */
 export function levelFor(world: World, zoom: number): Layer {
   const i = LEVEL_UNTIL.findIndex((until) => zoom < until)
   return world.levels[i === -1 ? world.levels.length - 1 : i]
@@ -83,6 +88,7 @@ export function countryAt(layer: Layer, lng: number, lat: number, hint?: string 
   for (const s of layer.shapes) {
     if (!s.a2) continue
     const [[w, south], [e, north]] = s.bounds
+    // cheap bounding-box test first: geoContains is slow on detailed shapes
     if (lat < south || lat > north) continue
     // bounds that cross the antimeridian come back with west > east
     if (w <= e ? lng < w || lng > e : lng < w && lng > e) continue

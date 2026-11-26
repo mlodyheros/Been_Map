@@ -1,3 +1,5 @@
+// The core data model: the country list, the four markings, stats, and
+// everything kept in localStorage (markings, people, settings, owner).
 import data from './data/countries.json'
 
 export type Status = 'visited' | 'lived' | 'transit' | 'wish'
@@ -6,13 +8,17 @@ export type Statuses = Record<string, Status>
 
 export interface Country {
   a2: string
+  /** ISO numeric code, used to match shapes in the world atlas. */
   n3: string | null
+  /** Polish name; `en` is the English one. */
   name: string
   en: string
   cont: ContinentId
+  /** Land area in km². */
   area: number
   lat: number
   lng: number
+  /** Independent state: counts towards the country total; the rest are territories. */
   ind: boolean
 }
 
@@ -37,9 +43,11 @@ export const STATUS_BY_ID = Object.fromEntries(STATUSES.map((s) => [s.id, s])) a
 /** "Been there" for stats purposes: transit and wishlist don't count. */
 export const isBeen = (s: Status | undefined) => s === 'visited' || s === 'lived'
 
+/** The flag emoji for a country code, built from regional indicator letters. */
 export const flag = (a2: string) =>
   String.fromCodePoint(...[...a2].map((ch) => 0x1f1e6 + ch.charCodeAt(0) - 65))
 
+/** Lower-cased and stripped of accents, for searching. ł has no decomposed form, so it is mapped by hand. */
 export const fold = (s: string) =>
   s
     .toLowerCase()
@@ -47,6 +55,7 @@ export const fold = (s: string) =>
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
 
+/** A land share as a percentage; a tiny one reads "<1%" rather than "0%". */
 export function landShareLabel(share: number) {
   const pct = share * 100
   if (pct > 0 && pct < 1) return '<1%'
@@ -64,6 +73,10 @@ export interface Stats {
   continents: { id: ContinentId; been: number; total: number }[]
 }
 
+/**
+ * The numbers on the dashboard. Only independent countries count towards the
+ * total; Antarctica is left out of the land share, as nobody can visit most of it.
+ */
 export function computeStats(statuses: Statuses, people: ReadonlySet<string>): Stats {
   let been = 0
   let total = 0
@@ -117,6 +130,7 @@ export function cleanStatuses(raw: unknown): Statuses {
   return out
 }
 
+/** Same as cleanStatuses, for the "know people from" countries. */
 export function cleanPeople(raw: unknown): Set<string> {
   return new Set((Array.isArray(raw) ? raw : []).filter((a2) => typeof a2 === 'string' && BY_A2.has(a2)))
 }
@@ -171,6 +185,7 @@ export interface Settings {
 
 const SETTINGS_KEY = 'been-map:settings:v1'
 
+/** Saved settings; anything missing or invalid falls back to the browser's language and the defaults. */
 export function loadSettings(): Settings {
   const fallback: Settings = { lang: navigator.language.toLowerCase().startsWith('pl') ? 'pl' : 'en', mode: 'globe', style: 'plain', panel: true }
   try {

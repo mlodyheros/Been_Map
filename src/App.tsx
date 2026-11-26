@@ -1,3 +1,5 @@
+// The app shell: holds the map's state, keeps it in storage and in sync with
+// the account, handles taps on the map, and lays out the map and dashboard.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Account from './Account'
 import { unlocked, ACHIEVEMENTS } from './achievements'
@@ -76,6 +78,8 @@ const PAGES: Page[] = ['map', 'hub']
 
 type Viewing = CloudMap &
   ({ kind: 'friend'; username: string } | { kind: 'shared'; id: string; name: string; members: number })
+
+// ---- phone bottom sheet
 
 type Snap = 'peek' | 'half' | 'full'
 const PHONE = '(max-width: 900px)'
@@ -167,6 +171,8 @@ function useSheet() {
   return { sheet, head, safeArea, phone, snap, setSnap, offset, peek: size.peek, grip }
 }
 
+// ---- icons and small helpers
+
 const DownloadIcon = () => (
   <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M10 3v9m0 0 3.5-3.5M10 12 6.5 8.5M4 15.5h12" />
@@ -245,6 +251,8 @@ export default function App() {
   /** Set when the map was just replaced wholesale (sign-in), so that is not announced as new achievements. */
   const quiet = useRef(false)
 
+  // ---- local storage and settings
+
   useEffect(() => saveStatuses(statuses), [statuses])
   useEffect(() => savePeople(people), [people])
   useEffect(() => saveExtras(extras), [extras])
@@ -267,6 +275,8 @@ export default function App() {
     document.documentElement.lang = settings.lang
     document.title = STRINGS[settings.lang].title
   }, [settings])
+
+  // ---- account and cloud sync
 
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
@@ -356,6 +366,7 @@ export default function App() {
     }
   }, [accountId])
 
+  // uploads a moment after the last change, so a burst of taps is one request
   useEffect(() => {
     if (!accountId || !cloudReady.current) return
     const timer = setTimeout(() => {
@@ -366,6 +377,8 @@ export default function App() {
     }, 700)
     return () => clearTimeout(timer)
   }, [accountId, statuses, people, extras])
+
+  // ---- other people's maps: friends, shared maps, public links
 
   const viewFriend = useCallback(async (friend: Friend) => {
     const map = await fetchMap(friend.userId)
@@ -438,11 +451,14 @@ export default function App() {
     if (location.search) history.replaceState(null, '', location.pathname)
   }
 
+  // a toast hides itself after a moment
   useEffect(() => {
     if (!toast) return
     const timer = setTimeout(() => setToast(null), 2200)
     return () => clearTimeout(timer)
   }, [toast])
+
+  // ---- marking countries, regions, places and trips
 
   /**
    * Applies the active marking to a country; a second tap with the same marking clears it.
@@ -616,6 +632,8 @@ export default function App() {
     [toggle, togglePin, toggleRegion],
   )
 
+  // ---- sharing and moving around the map
+
   const statsRef = useRef(computeStats({}, new Set()))
   const closeShare = useCallback(() => setSharing(false), [])
   const renderShare = useCallback(
@@ -647,6 +665,8 @@ export default function App() {
       document.querySelector('.hub li[data-open]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
     )
   }
+
+  // ---- what is shown: derived state
 
   // everything below draws either your own map or the friend's map being viewed
   const own = { statuses, people }
@@ -724,6 +744,8 @@ export default function App() {
     [t.extras.places, shownExtras.pins.length],
     [t.extras.regions, Object.keys(shownExtras.regions).length],
   ] as const
+
+  // ---- pieces of the layout
 
   const title = (
     <>

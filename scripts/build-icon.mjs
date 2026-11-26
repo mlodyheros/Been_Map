@@ -11,6 +11,7 @@ const LAND = hex('#F8F4EA')
 const MARK = hex('#FF5A36')
 
 const inCircle = (x, y, cx, cy, r) => (x - cx) ** 2 + (y - cy) ** 2 <= r * r
+// first match wins: dark ground outside the globe, the marked patch, the land, then sea
 function colorAt(x, y) {
   if (!inCircle(x, y, 90, 90, 62)) return INK
   if (inCircle(x, y, 104, 74, 22)) return MARK
@@ -18,6 +19,7 @@ function colorAt(x, y) {
   return SEA
 }
 
+// raw PNG scanlines: each row starts with a filter byte (0, none), then RGB per pixel
 const raw = Buffer.alloc(SIZE * (SIZE * 3 + 1))
 for (let y = 0; y < SIZE; y++) {
   for (let x = 0; x < SIZE; x++) {
@@ -32,6 +34,7 @@ for (let y = 0; y < SIZE; y++) {
   }
 }
 
+// CRC-32, as every PNG chunk ends with one over its type and data
 const crcTable = Array.from({ length: 256 }, (_, n) => {
   let c = n
   for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
@@ -42,6 +45,7 @@ const crc = (buf) => {
   for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8)
   return (c ^ 0xffffffff) >>> 0
 }
+/** A PNG chunk: length, type, data, CRC. */
 const chunk = (type, data) => {
   const body = Buffer.concat([Buffer.from(type), data])
   const out = Buffer.alloc(body.length + 8)

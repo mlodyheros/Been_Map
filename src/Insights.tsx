@@ -1,3 +1,5 @@
+// Dashboard cards: achievements (summary and full page), the trip timeline,
+// progress through regions, and the list of marked places.
 import { useEffect, useRef } from 'react'
 import { ACHIEVEMENTS, CATEGORIES, type Achievement, type Input } from './achievements'
 import { TRANSPORT_ICON } from './CountryDetails'
@@ -13,12 +15,14 @@ interface Row {
   earned: boolean
 }
 
+/** Each achievement with its progress, capped at what it needs so bars never overflow. */
 const rowsOf = (input: Input): Row[] =>
   ACHIEVEMENTS.map((a) => {
     const [done, needed] = a.progress(input)
     return { a, done: Math.min(done, needed), needed, earned: done >= needed }
   })
 
+/** One achievement: icon, name, hint and a progress bar. */
 function Badge({ row, lang }: { row: Row; lang: Lang }) {
   const { a, done, needed, earned } = row
   return (
@@ -51,6 +55,7 @@ function Ring({ share }: { share: number }) {
         strokeWidth="7"
         strokeLinecap="round"
         className="ring-fill"
+        // the dash covers `share` of the circle; rotated so it starts at the top
         strokeDasharray={`${around * share} ${around}`}
         transform="rotate(-90 32 32)"
       />
@@ -185,6 +190,7 @@ export function Timeline({ lang, extras, onOpen }: { lang: Lang; extras: Extras;
                       <strong>{countryName(BY_A2.get(a2)!, lang)}</strong>
                       <small>
                         {[
+                          // mid-month, so no time zone can push the date into the next or previous month
                           trip.date && month.format(new Date(`${trip.date}-15`)),
                           trip.transport?.map((k) => TRANSPORT_ICON[k]).join(' '),
                           trip.photos?.length && `📷 ${trip.photos.length}`,

@@ -1,3 +1,5 @@
+// Everything on a map beyond the country markings: pins, regions and trips,
+// with cleaning of untrusted input, the stored shape, and merging on sign-in.
 import { BY_A2, STATUS_BY_ID, type Status, type Statuses } from './model'
 
 /** A place marked on the map: a city picked from the search, or a point tapped by hand. */
@@ -41,9 +43,12 @@ export const MAX_NOTE = 500
 export const MAX_TRIPS = 12
 export const MAX_PHOTOS = 10
 
+/** Short, unique enough id for a trip; ids keep a trip's identity across devices when merging. */
 export const newTripId = () => `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+/** A trip with nothing filled in: shown while being edited, never stored. */
 export const tripIsEmpty = (t: Trip) => !t.date && !t.text && !t.transport?.length && !t.photos?.length
 
+/** One trip from untrusted input, or null when nothing usable is left. */
 function cleanTrip(raw: unknown, fallbackId: string): Trip | null {
   if (!raw || typeof raw !== 'object') return null
   const { id, date, text, transport, photos } = raw as Record<string, unknown>
@@ -124,7 +129,10 @@ export function storedExtras(extras: Extras) {
   return { pins: extras.pins, regions: extras.regions, notes }
 }
 
-/** Adds what was marked before signing in to what the account already holds. */
+/**
+ * Adds what was marked before signing in to what the account already holds.
+ * Pins and trips are matched by id; where both mark a region, the account's marking wins.
+ */
 export function mergeExtras(local: Extras, remote: Extras): Extras {
   const ids = new Set(remote.pins.map((p) => p.id))
   const trips = { ...remote.trips }
@@ -139,6 +147,7 @@ export function mergeExtras(local: Extras, remote: Extras): Extras {
   }
 }
 
+/** True when there are any pins, regions or trips at all. */
 export const hasExtras = (e: Extras) =>
   e.pins.length > 0 || Object.keys(e.regions).length > 0 || Object.keys(e.trips).length > 0
 

@@ -1,3 +1,5 @@
+// States, provinces and the like: shapes fetched on demand, lookup by point,
+// and a hook for components that list them.
 import { useEffect, useState } from 'react'
 import { geoArea, geoBounds, geoCentroid, geoContains, geoDistance } from 'd3-geo'
 import { feature } from 'topojson-client'
@@ -60,6 +62,7 @@ export function loadRegions(): Promise<Regions> {
           const bounds = geoBounds(f)
           const centre = geoCentroid(f)
           const [[w, s], [e, n]] = bounds
+          // as in geo.ts: spans that wrap the antimeridian or cover a pole are never culled
           const wide = w > e || e - w > 150 || n - s > 120
           const corners: [number, number][] = [
             [w, s],
@@ -87,8 +90,10 @@ export function loadRegions(): Promise<Regions> {
 /** The regions if they have been fetched already; never starts a fetch. */
 export const regionsNow = () => loaded
 
+/** The region's name in the given language. */
 export const regionName = (r: Region, lang: Lang) => (lang === 'pl' ? r.pl : r.en)
 
+/** The region containing the point, if any; bounding boxes are checked before the slower geoContains. */
 export function regionAt(regions: Regions, lng: number, lat: number): Region | null {
   for (const s of regions.shapes) {
     const [[w, south], [e, north]] = s.bounds
@@ -133,6 +138,7 @@ export function nearestRegion(regions: Regions, a2: string, lng: number, lat: nu
     for (const polygon of polygons) {
       for (const ring of polygon) {
         for (const [x, y] of ring) {
+          // flat-earth distance to each outline point: fine at the scale of a few km
           const km = Math.hypot((x - lng) * cos, y - lat) * RAD * 6371
           if (km < bestKm) {
             bestKm = km

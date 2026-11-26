@@ -23,6 +23,7 @@ function database(): Promise<IDBDatabase> {
   return opening
 }
 
+/** Runs one request in its own transaction and resolves once the transaction has committed. */
 const run = async <T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T>) => {
   const db = await database()
   return new Promise<T>((resolve, reject) => {
@@ -33,6 +34,7 @@ const run = async <T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) =>
   })
 }
 
+/** Decodes a picture, upright as the camera meant it; `done` frees the decoded bitmap. */
 async function decode(file: Blob): Promise<{ source: CanvasImageSource; width: number; height: number; done(): void }> {
   if ('createImageBitmap' in window) {
     try {
@@ -75,6 +77,7 @@ export async function addPhoto(file: Blob): Promise<string> {
   return id
 }
 
+// one object URL per photo, shared by every thumbnail and viewer that shows it
 const urls = new Map<string, Promise<string | null>>()
 
 /** An address the picture can be shown from, or null when this device does not have it. */
@@ -90,6 +93,7 @@ export function photoUrl(id: string): Promise<string | null> {
   return url
 }
 
+/** Deletes photos from this device and releases their object URLs. */
 export async function removePhotos(ids: readonly string[]) {
   if (!ids.length) return
   for (const id of ids) {

@@ -5,6 +5,7 @@ import { writeFileSync } from 'node:fs'
 const require = createRequire(import.meta.url)
 const source = require('world-countries')
 
+// the Americas are split at South America: Central America and the Caribbean count as North America
 const continent = (c) => {
   if (c.region === 'Americas') return c.subregion === 'South America' ? 'SA' : 'NA'
   return { Europe: 'EU', Asia: 'AS', Africa: 'AF', Oceania: 'OC', Antarctic: 'AN' }[c.region]
@@ -20,6 +21,7 @@ const countries = source
     area: Math.max(0, Math.round(c.area)),
     lat: c.latlng[0],
     lng: c.latlng[1],
+    // Kosovo is not marked independent in the source but counts as a country here
     ind: c.independent === true || c.cca2 === 'XK',
   }))
   .sort((a, b) => a.name.localeCompare(b.name, 'pl'))

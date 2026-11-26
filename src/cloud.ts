@@ -1,3 +1,5 @@
+// Everything that talks to Supabase: accounts, syncing the personal map,
+// public links, friends and shared maps. Errors come out as CloudError codes.
 import { createClient } from '@supabase/supabase-js'
 import { cleanExtras, storedExtras, type Extras } from './extras'
 import { cleanPeople, cleanStatuses, type Statuses } from './model'
@@ -42,6 +44,7 @@ export type CloudErrorCode =
   | 'setup'
   | 'unknown'
 
+/** An error the UI can explain: `code` picks the message in the user's language. */
 export class CloudError extends Error {
   constructor(
     public code: CloudErrorCode,
@@ -51,6 +54,7 @@ export class CloudError extends Error {
   }
 }
 
+/** Turns a Supabase or Postgres error into a CloudError and throws it. */
 function fail(error: { message: string; code?: string }): never {
   const text = error.message.toLowerCase()
   if (text.includes('invalid login')) throw new CloudError('credentials')
@@ -87,6 +91,7 @@ export async function signUp(email: string, password: string, username: string) 
   return Boolean(data.session)
 }
 
+/** Signs in with e-mail and password; the session change is picked up by the app's auth listener. */
 export async function signIn(email: string, password: string) {
   const { error } = await supabase.auth.signInWithPassword({ email, password })
   if (error) fail(error)
@@ -131,6 +136,7 @@ export async function signOut() {
   await supabase.auth.signOut()
 }
 
+/** The account's stored map, or null before it has saved one. */
 export async function fetchMap(userId: string): Promise<CloudMap | null> {
   const { data, error } = await supabase.from('maps').select('*').eq('user_id', userId).maybeSingle()
   if (error) fail(error)
@@ -142,6 +148,7 @@ export async function fetchMap(userId: string): Promise<CloudMap | null> {
 /** False once the database turned out to predate places, regions and notes (schema.sql not re-run yet). */
 let extrasStored = true
 
+/** Writes the whole map in one upsert. */
 export async function saveMap(userId: string, map: CloudMap) {
   const row = {
     user_id: userId,
@@ -174,6 +181,7 @@ export async function fetchPublicMap(username: string): Promise<(CloudMap & { us
     : null
 }
 
+/** Whether the account's public link is switched on. */
 export async function isPublic(userId: string) {
   const { data, error } = await supabase.from('profiles').select('is_public').eq('id', userId).maybeSingle()
   if (error) fail(error)
@@ -185,6 +193,7 @@ export async function setPublic(userId: string, on: boolean) {
   if (error) fail(error)
 }
 
+/** Friendships and requests in both directions, from this user's side; row-level security limits the rows to their own. */
 export async function listFriends(userId: string): Promise<Friend[]> {
   const { data, error } = await supabase
     .from('friendships')
@@ -213,6 +222,7 @@ export async function listFriends(userId: string): Promise<Friend[]> {
     .sort((a, b) => a.username.localeCompare(b.username))
 }
 
+/** Sends a friend request by username (with or without the @). */
 export async function sendRequest(userId: string, username: string) {
   const name = username.trim().replace(/^@/, '').toLowerCase()
   const found = await supabase.from('profiles').select('id').eq('username', name).maybeSingle()
@@ -223,6 +233,7 @@ export async function sendRequest(userId: string, username: string) {
   if (error) fail(error)
 }
 
+/** Only the invited side may accept; schema.sql enforces it. */
 export async function acceptRequest(id: number) {
   const { error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', id)
   if (error) fail(error)
@@ -242,6 +253,7 @@ export interface SharedMapInfo {
   members: { userId: string; username: string }[]
 }
 
+/** Shared maps the user is a member of, with who else is on each. */
 export async function listSharedMaps(userId: string): Promise<SharedMapInfo[]> {
   const { data, error } = await supabase
     .from('shared_maps')
@@ -264,6 +276,7 @@ export async function listSharedMaps(userId: string): Promise<SharedMapInfo[]> {
   }))
 }
 
+/** Goes through a database function so the creator becomes the first member in the same step. */
 export async function createSharedMap(name: string) {
   const { error } = await supabase.rpc('create_shared_map', { map_name: name })
   if (error) fail(error)
@@ -285,17 +298,23 @@ export async function removeSharedMember(mapId: string, userId: string) {
   if (error) fail(error)
 }
 
+/** A shared map's markings. Shared maps have countries and people only, no extras. */
 export async function fetchSharedMap(id: string): Promise<CloudMap | null> {
   const { data, error } = await supabase.from('shared_maps').select('statuses, people').eq('id', id).maybeSingle()
   if (error) fail(error)
   return data ? { statuses: cleanStatuses(data.statuses), people: cleanPeople(data.people) } : null
 }
 
+/**
+ * Marks one country on a shared map (null clears it). Done one country at a
+ * time on the server, so two people marking at once don't overwrite each other.
+ */
 export async function markShared(mapId: string, country: string, status: string | null) {
   const { error } = await supabase.rpc('mark_shared_map', { map: mapId, country, new_status: status })
   if (error) fail(error)
 }
 
+/** Same as markShared, for the "know people from" flag. */
 export async function flagShared(mapId: string, country: string, known: boolean) {
   const { error } = await supabase.rpc('flag_shared_map', { map: mapId, country, known })
   if (error) fail(error)

@@ -1,3 +1,5 @@
+// The shareable picture: a map snapshot with the count, land share and legend,
+// drawn on a canvas, plus helpers to hand it to other apps or save it.
 import { STRINGS, type Lang } from './i18n'
 import { PEOPLE_COLOR, STATUSES, isDark, landShareLabel, type MapStyle, type Stats } from './model'
 
@@ -35,6 +37,7 @@ export async function renderCard(
 
   ctx.fillStyle = dark ? '#070A18' : '#F1F2F7'
   ctx.fillRect(0, 0, SHEET, H)
+  // the square map is centred a little above the middle, leaving room for the numbers below
   ctx.drawImage(globe, 0, top + 150 + (bottom - top - 2000) / 2, SHEET, SHEET)
 
   ctx.fillStyle = ink
@@ -45,6 +48,7 @@ export async function renderCard(
   ctx.font = '700 190px Unbounded, sans-serif'
   const count = String(stats.been)
   ctx.fillText(count, 104, bottom - 190)
+  // the two lines of text sit to the right of the big number, however wide it is
   const after = 104 + ctx.measureText(count).width + 36
   ctx.font = '500 52px Onest, sans-serif'
   ctx.fillText(t.countries(stats.been), after, bottom - 262)
@@ -67,12 +71,14 @@ export async function renderCard(
   return new Promise((done) => canvas.toBlob(done, 'image/png'))
 }
 
+/** The card as a file, for the Web Share API. */
 export const cardFile = (blob: Blob) => new File([blob], 'been-map.png', { type: 'image/png' })
 
 /** True when this browser can hand an image to other apps (phones, mostly). */
 export const canShareFiles = (blob: Blob) =>
   typeof navigator.canShare === 'function' && navigator.canShare({ files: [cardFile(blob)] })
 
+/** Saves the card through a temporary link; the URL is released once the download has started. */
 export function downloadCard(blob: Blob) {
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)

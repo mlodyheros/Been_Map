@@ -1,3 +1,4 @@
+// Cities for the place search and for naming pins dropped on the map.
 import { fold } from './model'
 
 export interface City {
@@ -54,6 +55,7 @@ const POLISH: [string, string][] = [
 export function searchCities(cities: City[], query: string, limit: number): City[] {
   const q = fold(query.trim())
   if (q.length < 2) return []
+  // Polish spellings that match the query bring up their English-named city first
   const named = new Set(POLISH.filter(([pl]) => pl.startsWith(q)).map(([, en]) => en))
   const starts: City[] = named.size ? cities.filter((c) => named.has(c.key)).slice(0, limit) : []
   const contains: City[] = []
@@ -68,6 +70,7 @@ export function searchCities(cities: City[], query: string, limit: number): City
 }
 
 const RAD = Math.PI / 180
+// equirectangular approximation: accurate enough over the few dozen km it is used for
 const km = (aLat: number, aLng: number, bLat: number, bLng: number) => {
   const x = (bLng - aLng) * RAD * Math.cos(((aLat + bLat) / 2) * RAD)
   const y = (bLat - aLat) * RAD
@@ -79,6 +82,7 @@ export function nearestCity(cities: City[], lng: number, lat: number, withinKm: 
   let best: City | null = null
   let bestScore = Infinity
   for (const c of cities) {
+    // a degree of latitude is about 111 km: skips most of the list before any maths
     if (Math.abs(c.lat - lat) > 1) continue
     const d = km(lat, lng, c.lat, c.lng)
     if (d > withinKm) continue
@@ -92,4 +96,5 @@ export function nearestCity(cities: City[], lng: number, lat: number, withinKm: 
   return best
 }
 
+/** The same city always gets the same pin id, so marking it twice removes it. */
 export const cityId = (c: City) => `c:${c.cc}:${c.key}:${c.lat.toFixed(1)}`
